@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
-  { href: "/", label: "Détection (version 1)" },
+  { href: "/", label: "V1 · Modèle de Google" },
+  { href: "/mon-modele", label: "V2 · Mon modèle (fine-tuning)" },
   { href: "/collecte", label: "Collecte de données" },
 ];
 

@@ -12,10 +12,14 @@ export const LEVELS: { name: string; hint: string }[] = [
   { name: "Danger", hint: "Endormissement : arrêtez-vous" },
 ];
 
-export type EyeSource = "ear" | "blendshape";
+export type EyeSource = "ear" | "blendshape" | "model";
+export type MouthSource = "mar" | "model";
 
 export type Settings = {
   eyeSource: EyeSource;
+  mouthSource: MouthSource;
+  modelEyeThreshold: number; // V2 : probabilité « yeux fermés » au-delà de laquelle on décide fermé
+  modelYawnThreshold: number; // V2 : probabilité « bâillement »
   earRatio: number; // seuil EAR = EAR calibré × ratio
   earDefault: number; // seuil EAR tant qu'il n'y a pas de calibration
   blinkScoreThreshold: number; // seuil du score eyeBlink (0–1) de Google
@@ -37,6 +41,9 @@ export type Settings = {
 
 export const DEFAULT_SETTINGS: Settings = {
   eyeSource: "ear",
+  mouthSource: "mar",
+  modelEyeThreshold: 0.5,
+  modelYawnThreshold: 0.5,
   earRatio: 0.75,
   earDefault: 0.21,
   blinkScoreThreshold: 0.5,
@@ -62,6 +69,8 @@ export type FaceMeasures = {
   mar: number;
   jawOpen: number;
   pose: HeadPose | null;
+  eyeProb?: number; // V2 : probabilité yeux fermés (mon modèle)
+  yawnProb?: number; // V2 : probabilité bâillement (mon modèle)
 };
 
 export type Baseline = { ear: number; mar: number; pitch: number; yaw: number; roll: number };
@@ -84,6 +93,8 @@ export type Snapshot = {
   closedFor: number;
   mar: number;
   jawOpen: number;
+  eyeProb: number;
+  yawnProb: number;
   yawning: boolean;
   perclos: number;
   blinksPerMin: number;
@@ -218,9 +229,11 @@ export class DrowsinessEngine {
     // ---- Yeux --------------------------------------------------------------
     const earThreshold = this.earThreshold();
     const eyesClosed = face
-      ? s.eyeSource === "ear"
-        ? face.ear < earThreshold
-        : face.blinkScore > s.blinkScoreThreshold
+      ? s.eyeSource === "model" && face.eyeProb !== undefined
+        ? face.eyeProb > s.modelEyeThreshold
+        : s.eyeSource === "blendshape"
+          ? face.blinkScore > s.blinkScoreThreshold
+          : face.ear < earThreshold
       : false;
 
     let closedFor = 0;
@@ -244,7 +257,11 @@ export class DrowsinessEngine {
     // ---- Bouche (bâillement) -----------------------------------------------
     let yawning = false;
     if (face && !calibrating) {
-      if (face.mar > s.marThreshold) {
+      const mouthOpen =
+        s.mouthSource === "model" && face.yawnProb !== undefined
+          ? face.yawnProb > s.modelYawnThreshold
+          : face.mar > s.marThreshold;
+      if (mouthOpen) {
         this.yawnSince ??= t;
         if (t - this.yawnSince >= s.yawnMinS) {
           yawning = true;
@@ -377,6 +394,8 @@ export class DrowsinessEngine {
         closedFor,
         mar: face?.mar ?? 0,
         jawOpen: face?.jawOpen ?? 0,
+        eyeProb: face?.eyeProb ?? 0,
+        yawnProb: face?.yawnProb ?? 0,
         yawning,
         perclos,
         blinksPerMin,

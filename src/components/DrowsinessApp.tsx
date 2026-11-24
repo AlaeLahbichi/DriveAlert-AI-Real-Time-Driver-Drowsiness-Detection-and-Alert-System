@@ -24,6 +24,7 @@ import {
 } from "@/lib/metrics";
 import LiveChart, { type ChartSample } from "./LiveChart";
 import SettingsPanel from "./SettingsPanel";
+import { drawLastCrops, predictV2, useV2Models, type V2Models } from "@/lib/v2Model";
 
 type Status = "loading" | "ready" | "running" | "error";
 
@@ -85,11 +86,34 @@ function formatClock(t0: number, t: number) {
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
-export default function DrowsinessApp() {
+export type Variant = "v1" | "v2";
+
+/** Réglages de départ : la V2 décide yeux / bouche avec mon modèle, la V1 avec les mesures de Google. */
+export function defaultSettingsFor(variant: Variant): Settings {
+  return variant === "v2" ? { ...DEFAULT_SETTINGS, eyeSource: "model", mouthSource: "model" } : { ...DEFAULT_SETTINGS };
+}
+
+function makeEngine(variant: Variant) {
+  const e = new DrowsinessEngine();
+  e.settings = defaultSettingsFor(variant);
+  return e;
+}
+
+const pct = (v: number) => `${(v * 100).toFixed(1)} %`;
+
+export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant }) {
+  const isV2 = variant === "v2";
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const { landmarkerRef, status: modelStatus, delegate, error: modelError } = useFaceLandmarker();
-  const engineRef = useRef(new DrowsinessEngine());
+  const [initialEngine] = useState(() => makeEngine(variant));
+  const engineRef = useRef(initialEngine);
+  const { models: v2Models, metrics: v2Metrics, error: v2Error } = useV2Models(isV2);
+  const v2Ref = useRef<V2Models | null>(null);
+  const cropRefs = useRef<(HTMLCanvasElement | null)[]>([null, null, null]);
+  useEffect(() => {
+    v2Ref.current = v2Models;
+  }, [v2Models]);
   const alarmRef = useRef(new AlarmPlayer());
   const chartRef = useRef<ChartSample[]>([]);
   const rafRef = useRef(0);
@@ -97,11 +121,18 @@ export default function DrowsinessApp() {
 
   const [running, setRunning] = useState(false);
   const [cameraError, setError] = useState<string | null>(null);
-  const status: Status = running ? "running" : modelStatus;
-  const error = cameraError ?? modelError;
+  const v2Loading = isV2 && !v2Models && !v2Error;
+  const status: Status = running
+    ? "running"
+    : modelStatus === "ready" && v2Loading
+      ? "loading"
+      : isV2 && v2Error
+        ? "error"
+        : modelStatus;
+  const error = cameraError ?? modelError ?? (isV2 ? v2Error : null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [events, setEvents] = useState<EngineEvent[]>([]);
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<Settings>(() => defaultSettingsFor(variant));
   const [muted, setMuted] = useState(false);
   const [fps, setFps] = useState(0);
   const [sessionStart, setSessionStart] = useState(0);
@@ -191,6 +222,15 @@ export default function DrowsinessApp() {
           jawOpen: score("jawOpen"),
           pose: matrix ? headPoseFromMatrix(matrix.data) : null,
         };
+        // V2 : mon modèle regarde les découpes des yeux et de la bouche.
+        const v2 = v2Ref.current;
+        if (v2) {
+          const pred = predictV2(v2, video, pts);
+          if (pred) {
+            face.eyeProb = pred.eyeProb;
+            face.yawnProb = pred.yawnProb;
+          }
+        }
       }
 
       const engine = engineRef.current;
@@ -205,6 +245,10 @@ export default function DrowsinessApp() {
         earThr: snap.earThreshold,
         mar: snap.mar,
         marThr: engine.settings.marThreshold,
+        eyeProb: snap.eyeProb,
+        eyeThr: engine.settings.modelEyeThreshold,
+        yawnProb: snap.yawnProb,
+        yawnThr: engine.settings.modelYawnThreshold,
         closed: snap.eyesClosed,
       });
       while (buf.length && now / 1000 - buf[0].t > 20) buf.shift();
@@ -219,6 +263,7 @@ export default function DrowsinessApp() {
       if (now - lastUi > 100 || evs.length) {
         lastUi = now;
         setSnapshot(snap);
+        if (v2Ref.current && pts) drawLastCrops(cropRefs.current);
       }
     };
     step();
@@ -298,14 +343,17 @@ export default function DrowsinessApp() {
         <div>
           <h1 className="text-xl font-bold">Détection de somnolence du conducteur</h1>
           <p className="text-xs text-slate-400">
-            Version 1 · modèle de Google (MediaPipe Face Landmarker) · alertes dans l’interface
+            {isV2
+              ? "Version 2 · mon modèle fine-tuné (MobileNetV2) pour les yeux et la bouche · Google pour le visage et la tête"
+              : "Version 1 · modèle de Google (MediaPipe Face Landmarker) · alertes dans l’interface"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300">
             {status === "loading" && "Chargement du modèle…"}
             {status === "error" && "Erreur"}
-            {(status === "ready" || running) && `Modèle prêt (${delegate})`}
+            {(status === "ready" || running) &&
+              (isV2 ? `Google (${delegate}) + mon modèle (${v2Models?.backend ?? "…"})` : `Modèle prêt (${delegate})`)}
             {running && ` · ${fps} FPS`}
           </span>
           {!running ? (
@@ -415,11 +463,54 @@ export default function DrowsinessApp() {
           </Card>
 
           <Card title="Courbes en temps réel (15 dernières secondes)">
-            <div className="grid gap-4 md:grid-cols-2">
-              <LiveChart buffer={chartRef} value="ear" max={0.45} color="#2A9D8F" label="EAR (ouverture des yeux) · zones rouges = yeux fermés" />
-              <LiveChart buffer={chartRef} value="mar" max={1} color="#7B5EA7" label="MAR (ouverture de la bouche)" />
-            </div>
+            {isV2 ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <LiveChart buffer={chartRef} value="eyeProb" max={1} color="#E76F51" label="Mon modèle : probabilité yeux fermés" />
+                <LiveChart buffer={chartRef} value="yawnProb" max={1} color="#F2A541" label="Mon modèle : probabilité bâillement" />
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2">
+                <LiveChart buffer={chartRef} value="ear" max={0.45} color="#2A9D8F" label="EAR (ouverture des yeux) · zones rouges = yeux fermés" />
+                <LiveChart buffer={chartRef} value="mar" max={1} color="#7B5EA7" label="MAR (ouverture de la bouche)" />
+              </div>
+            )}
           </Card>
+
+          {isV2 && (
+            <Card title="Ce que voit mon modèle (découpes 96×96)">
+              <div className="flex flex-wrap items-end gap-4">
+                {(["Œil droit", "Œil gauche", "Bouche"] as const).map((label, i) => (
+                  <div key={label} className="flex flex-col items-center gap-1">
+                    <canvas
+                      ref={(el) => {
+                        cropRefs.current[i] = el;
+                      }}
+                      width={96}
+                      height={96}
+                      className="h-24 w-24 rounded-lg border border-white/10 bg-black"
+                    />
+                    <span className="text-xs text-slate-400">{label}</span>
+                  </div>
+                ))}
+                {v2Metrics && (
+                  <div className="min-w-56 flex-1 text-xs text-slate-300">
+                    <p className="mb-1 font-semibold text-slate-200">Scores sur les images de test</p>
+                    {(["yeux", "bouche"] as const).map((k) => {
+                      const m = v2Metrics[k];
+                      if (!m) return null;
+                      return (
+                        <p key={k}>
+                          {k === "yeux" ? "Yeux" : "Bouche"} : exactitude {pct(m.test.accuracy)} · F1 {pct(m.test.f1)} ·{" "}
+                          {m.test.n} images
+                        </p>
+                      );
+                    })}
+                    <p className="mt-1 text-slate-500">{v2Metrics.yeux?.base} · découpage {v2Metrics.yeux?.split}</p>
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
         </div>
 
         {/* ---- Colonne droite : niveau, mesures, historique ---- */}
@@ -462,6 +553,26 @@ export default function DrowsinessApp() {
 
           <Card title="Mesures">
             <div className="flex flex-col gap-3">
+              {isV2 && (
+                <>
+                  <Gauge
+                    label="Mon modèle · probabilité yeux fermés"
+                    value={snapshot?.eyeProb ?? 0}
+                    display={snapshot ? snapshot.eyeProb.toFixed(2) : "–"}
+                    max={1}
+                    threshold={settings.modelEyeThreshold}
+                    danger={!!snapshot?.eyesClosed}
+                  />
+                  <Gauge
+                    label="Mon modèle · probabilité bâillement"
+                    value={snapshot?.yawnProb ?? 0}
+                    display={snapshot ? snapshot.yawnProb.toFixed(2) : "–"}
+                    max={1}
+                    threshold={settings.modelYawnThreshold}
+                    danger={(snapshot?.yawnProb ?? 0) > settings.modelYawnThreshold}
+                  />
+                </>
+              )}
               <Gauge
                 label={`EAR · seuil ${snapshot ? snapshot.earThreshold.toFixed(3) : "–"}${baseline ? " (calibré)" : " (par défaut)"}`}
                 value={snapshot?.ear ?? 0}
@@ -546,7 +657,8 @@ export default function DrowsinessApp() {
               <SettingsPanel
                 settings={settings}
                 onChange={updateSettings}
-                onReset={() => updateSettings({ ...DEFAULT_SETTINGS })}
+                onReset={() => updateSettings(defaultSettingsFor(variant))}
+                withModel={isV2}
               />
             </div>
           )}
@@ -560,3 +672,4 @@ export default function DrowsinessApp() {
     </div>
   );
 }
+

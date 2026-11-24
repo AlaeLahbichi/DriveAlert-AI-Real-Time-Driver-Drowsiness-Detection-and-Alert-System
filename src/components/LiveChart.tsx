@@ -2,11 +2,22 @@
 
 import { useEffect, useRef, type RefObject } from "react";
 
-export type ChartSample = { t: number; ear: number; earThr: number; mar: number; marThr: number; closed: boolean };
+export type ChartSample = {
+  t: number;
+  ear: number;
+  earThr: number;
+  mar: number;
+  marThr: number;
+  eyeProb: number;
+  eyeThr: number;
+  yawnProb: number;
+  yawnThr: number;
+  closed: boolean;
+};
 
 type Props = {
   buffer: RefObject<ChartSample[]>;
-  value: "ear" | "mar";
+  value: "ear" | "mar" | "eyeProb" | "yawnProb";
   max: number;
   color: string;
   label: string;
@@ -64,7 +75,7 @@ export default function LiveChart({ buffer, value, max, color, label, windowS = 
       const visible = data.filter((d) => tEnd - d.t <= windowS);
 
       // Zones « yeux fermés » (seulement sur la courbe EAR)
-      if (value === "ear") {
+      if (value === "ear" || value === "eyeProb") {
         ctx.fillStyle = "rgba(231,111,81,0.18)";
         for (let i = 1; i < visible.length; i++) {
           if (visible[i].closed) ctx.fillRect(x(visible[i - 1].t), 6, x(visible[i].t) - x(visible[i - 1].t) + 0.5, plotH);
@@ -72,7 +83,7 @@ export default function LiveChart({ buffer, value, max, color, label, windowS = 
       }
 
       // Seuil
-      const thrKey = value === "ear" ? "earThr" : "marThr";
+      const thrKey = ({ ear: "earThr", mar: "marThr", eyeProb: "eyeThr", yawnProb: "yawnThr" } as const)[value];
       ctx.strokeStyle = "#F2A541";
       ctx.setLineDash([5, 4]);
       ctx.beginPath();
