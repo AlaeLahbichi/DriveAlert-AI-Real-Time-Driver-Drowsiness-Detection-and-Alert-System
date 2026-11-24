@@ -39,3 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# graphify
+graphify-out/
+
+# Images de visages collectées (données personnelles)
+/data/
+
+# entraînement V2
+training/.venv/
+training/runs/
