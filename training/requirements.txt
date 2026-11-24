@@ -1,0 +1,10 @@
+# Environnement d'entraînement de la V2 (Python 3.11)
+# Installation : uv pip install --python .venv/bin/python -r requirements.txt
+tensorflow==2.19.*
+tensorflow-decision-forests==1.12.0
+tensorflowjs==4.22.0
+ydf<0.13
+protobuf<6
+setuptools<81
+pillow
+scikit-learn
