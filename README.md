@@ -27,7 +27,7 @@ Le projet compare **deux versions** de la détection :
 1. [Fonctionnalités](#fonctionnalités)
 2. [Architecture](#architecture)
 3. [Installation et lancement](#installation-et-lancement)
-4. [Utilisation : les 3 onglets](#utilisation--les-3-onglets)
+4. [Utilisation : les 4 onglets](#utilisation--les-4-onglets)
 5. [Règles d'alerte](#règles-dalerte)
 6. [Base de données d'images](#base-de-données-dimages)
 7. [Entraînement du modèle V2](#entraînement-du-modèle-v2)
@@ -101,7 +101,14 @@ npm start
 
 Le modèle de Google (`public/models/face_landmarker.task`), le moteur MediaPipe (`public/mediapipe/wasm/`) et les modèles V2 (`public/models/v2/`) sont fournis dans le dépôt. Aucun téléchargement supplémentaire n'est nécessaire.
 
-## Utilisation : les 3 onglets
+## Utilisation : les 4 onglets
+
+Les onglets sont regroupés en haut de page : **Détection** (V1, V2), **Analyse** (Tableau de bord) et **Données** (Collecte).
+
+Chaque page de détection suit la même disposition :
+
+- **à gauche** : la caméra, puis les **courbes des yeux et de la bouche** (15 dernières secondes). Chaque courbe affiche sa valeur actuelle, son état (« Ouverts / Fermés », « Fermée / Bâillement »), le seuil en pointillés, les périodes anormales en rouge et la valeur au survol ;
+- **à droite** : le niveau d'alerte, les indicateurs clés, puis un panneau à onglets : **Mesures**, **Boîtier IoT**, **Événements** et **Réglages**.
 
 ### 1. V1 · Modèle de Google (`/`)
 
@@ -114,7 +121,7 @@ Le modèle de Google (`public/models/face_landmarker.task`), le moteur MediaPipe
    - baissez la tête ;
    - tournez la tête.
 
-Utilisez « Calibrer » pour recommencer la calibration et « Réglages des seuils » pour ajuster les règles.
+Utilisez « Calibrer » pour recommencer la calibration et l'onglet « Réglages » pour ajuster les règles.
 
 ### 2. V2 · Mon modèle (fine-tuning) (`/mon-modele`)
 
@@ -126,9 +133,19 @@ L'onglet affiche aussi :
 - les **probabilités** données par le modèle : yeux fermés et bâillement ;
 - ses **scores sur les images de test**.
 
-Dans les réglages, vous pouvez revenir aux mesures EAR et MAR pour comparer les deux versions.
+Le bouton **« Mon modèle / Géométrie (EAR / MAR) »** au-dessus des courbes permet de comparer les deux approches en direct.
 
-### 3. Collecte de données (`/collecte`)
+### 3. Tableau de bord (`/tableau-de-bord`)
+
+Les logs sont présentés sous forme de **KPI** et de **graphes**, filtrables par période (aujourd'hui, 7 jours, 30 jours, tout) et par version (V1, V2) :
+
+- **KPI** : sessions, temps surveillé, % du temps en état normal, alertes, SOS envoyés, temps de réaction du conducteur, pauses acceptées, latence MQTT ;
+- **graphes** : répartition du temps par niveau, signes de fatigue par type, chronologie d'une session, alertes par session, fatigue par heure de la journée, journal du boîtier et latence plateforme ↔ boîtier ;
+- **comparaison V1 / V2** et **tableau des derniers logs** (plateforme, boîtier, conducteur), avec **export CSV**.
+
+Les logs sont enregistrés dans le navigateur (localStorage) : aucune donnée n'est envoyée sur un serveur. Le tableau se met à jour en direct pendant une détection, même ouvert dans un autre onglet.
+
+### 4. Collecte de données (`/collecte`)
 
 Cet onglet construit la base d'images qui sert à entraîner la V2.
 
@@ -303,7 +320,7 @@ cp iot/include/secrets.example.h iot/include/secrets.h   # puis le remplir (Gree
 cd iot && pio run                                 # compile le firmware
 ```
 
-Dans VS Code : ouvrir `iot/diagram.json`, puis **« Wokwi: Start Simulator »**. Ouvrir ensuite la plateforme (onglet V1 ou V2) : la carte **« Boîtier IoT »** affiche l'état de l'ESP32, la réponse du conducteur et le journal.
+Dans VS Code : ouvrir `iot/diagram.json`, puis **« Wokwi: Start Simulator »**. Ouvrir ensuite la plateforme (onglet V1 ou V2) : l'onglet **« Boîtier IoT »** affiche l'état de l'ESP32, la réponse du conducteur et le journal.
 
 > `iot/include/secrets.h` (identifiants Green-API, numéro) est ignoré par git. Sans identifiants, le SOS est simulé (affiché dans le moniteur série).
 
@@ -319,20 +336,25 @@ Dans VS Code : ouvrir `iot/diagram.json`, puis **« Wokwi: Start Simulator »**.
 │   ├── app/
 │   │   ├── page.tsx               # onglet V1
 │   │   ├── mon-modele/page.tsx    # onglet V2
+│   │   ├── tableau-de-bord/page.tsx # onglet Tableau de bord
 │   │   ├── collecte/page.tsx      # onglet Collecte
 │   │   └── api/dataset/           # API : enregistrer, lister, supprimer, découper les images
 │   ├── components/
 │   │   ├── DrowsinessApp.tsx      # interface de détection (V1 et V2)
 │   │   ├── DataCollector.tsx      # interface de collecte et d'étiquetage
-│   │   ├── LiveChart.tsx          # courbes en temps réel
+│   │   ├── LiveChart.tsx          # courbes en temps réel (yeux, bouche)
+│   │   ├── Dashboard.tsx          # tableau de bord : KPI et graphes des logs
+│   │   ├── charts.tsx             # graphiques du tableau de bord (SVG, sans librairie)
 │   │   ├── SettingsPanel.tsx      # réglage des seuils
-│   │   ├── IotPanel.tsx           # carte « Boîtier IoT » (état, réponse, journal)
-│   │   └── NavTabs.tsx            # les 3 onglets
+│   │   ├── IotPanel.tsx           # onglet « Boîtier IoT » (état, réponse, journal)
+│   │   └── NavTabs.tsx            # navigation (Détection, Analyse, Données)
 │   └── lib/
 │       ├── metrics.ts             # EAR, MAR, angles de la tête
 │       ├── engine.ts              # moteur de décision : niveaux 0 à 3, calibration, PERCLOS
 │       ├── alarm.ts               # son, voix, vibration
 │       ├── iot.ts                 # liaison MQTT avec le boîtier ESP32
+│       ├── logStore.ts            # logs persistants (sessions, boîtier, réponses, latence)
+│       ├── theme.ts               # code couleur (identique à globals.css)
 │       ├── useFaceLandmarker.ts   # chargement du modèle de Google
 │       ├── v2Model.ts             # chargement et exécution de notre modèle (TF.js)
 │       ├── crop.ts                # découpe des yeux et de la bouche
