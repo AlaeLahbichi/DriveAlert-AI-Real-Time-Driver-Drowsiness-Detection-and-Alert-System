@@ -1,14 +1,41 @@
 @import "tailwindcss";
 
+/* Code couleur de la plateforme (même valeurs dans src/lib/theme.ts pour les canvas et les SVG). */
+@theme {
+  --color-base: #0b0f17; /* fond de page */
+  --color-nav: #080b11; /* barre de navigation */
+  --color-surface: #121826; /* cartes */
+  --color-raised: #1a2132; /* blocs dans une carte */
+  --color-line: #262f44; /* bordures */
+  --color-ink: #eef1f7; /* texte principal */
+  --color-soft: #c3c9d8; /* texte secondaire */
+  --color-muted: #8e97ad; /* libellés */
+  --color-faint: #626b82; /* texte discret */
+  --color-brand: #2a78d6; /* boutons, onglet actif */
+  --color-brand-hi: #3987e5;
+  --color-eye: #3987e5; /* courbe des yeux */
+  --color-mouth: #d55181; /* courbe de la bouche */
+  --color-ok: #0ca30c; /* niveau 0 */
+  --color-warn: #fab219; /* niveau 1 */
+  --color-alert: #ec835a; /* niveau 2 */
+  --color-danger: #d03b3b; /* niveau 3 */
+}
+
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 body {
-  background: #0f1b2d;
-  color: #eef2f6;
+  background: var(--color-base);
+  color: var(--color-ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Barres de défilement discrètes */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
 }
 
 /* Niveau 2 : pulsation lente. Niveau 3 : clignotement rapide. */

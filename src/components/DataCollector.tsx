@@ -41,8 +41,8 @@ const emptyCounts = () => Object.fromEntries(CLASS_KEYS.map((k) => [k, 0])) as R
 
 function Card({ title, children, className = "" }: { title?: string; children: React.ReactNode; className?: string }) {
   return (
-    <section className={`rounded-2xl border border-white/10 bg-[#16243A] p-4 ${className}`}>
-      {title && <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">{title}</h2>}
+    <section className={`rounded-2xl border border-line bg-surface p-4 ${className}`}>
+      {title && <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">{title}</h2>}
       {children}
     </section>
   );
@@ -57,7 +57,7 @@ function Slider({ label, value, min, max, step, onChange }: {
   onChange: (v: number) => void;
 }) {
   return (
-    <label className="flex flex-col gap-1 text-xs text-slate-300">
+    <label className="flex flex-col gap-1 text-xs text-soft">
       <span className="flex justify-between">
         <span>{label}</span>
         <span className="font-mono text-white">{value.toFixed(2)}</span>
@@ -69,7 +69,7 @@ function Slider({ label, value, min, max, step, onChange }: {
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="accent-[#F2A541]"
+        className="accent-brand"
       />
     </label>
   );
@@ -532,16 +532,16 @@ export default function DataCollector() {
   const persons = stats ? Object.entries(stats.persons).sort((a, b) => a[0].localeCompare(b[0])) : [];
 
   return (
-    <div className="min-h-screen bg-[#0F1B2D] text-[#EEF2F6]">
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 px-6 py-4">
+    <div className="min-h-screen bg-base text-ink">
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-line px-6 py-4">
         <div>
           <h1 className="text-xl font-bold">Collecte et étiquetage des données</h1>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-muted">
             Préparer la base d’images pour le fine-tuning (version 2) · enregistrement dans le dossier <code>data/</code>
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300">
+          <span className="rounded-full border border-line px-3 py-1 text-xs text-soft">
             {modelStatus === "loading" && "Chargement du modèle…"}
             {modelStatus === "error" && "Erreur"}
             {modelStatus === "ready" && `Modèle prêt (${delegate})`}
@@ -551,12 +551,12 @@ export default function DataCollector() {
             <button
               onClick={start}
               disabled={modelStatus !== "ready"}
-              className="rounded-lg bg-[#2A9D8F] px-4 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-40"
+              className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-40"
             >
               ▶ Démarrer la caméra
             </button>
           ) : (
-            <button onClick={stop} className="rounded-lg border border-white/20 px-4 py-2 text-sm hover:bg-white/10">
+            <button onClick={stop} className="rounded-lg border border-line px-4 py-2 text-sm hover:bg-white/10">
               ■ Arrêter
             </button>
           )}
@@ -564,7 +564,7 @@ export default function DataCollector() {
       </header>
 
       {error2 && (
-        <div className="mx-6 mt-4 flex items-center justify-between rounded-lg border border-[#E76F51] bg-[#E76F51]/10 px-4 py-2 text-sm">
+        <div className="mx-6 mt-4 flex items-center justify-between rounded-lg border border-danger bg-danger/10 px-4 py-2 text-sm">
           <span>{error2}</span>
           <button onClick={() => setError(null)} className="text-xs underline">
             fermer
@@ -577,38 +577,38 @@ export default function DataCollector() {
         <div className="flex flex-col gap-4">
           <Card title="1 · Qui est filmé ?">
             <div className="grid gap-3 sm:grid-cols-4">
-              <label className="flex flex-col gap-1 text-xs text-slate-400 sm:col-span-2">
+              <label className="flex flex-col gap-1 text-xs text-muted sm:col-span-2">
                 Personne (identifiant, sans nom complet)
                 <input
                   value={person}
                   onChange={(e) => setPerson(e.target.value)}
                   placeholder="ex. p01"
-                  className="rounded-lg border border-white/15 bg-[#0F1B2D] px-3 py-2 text-sm text-white outline-none focus:border-[#2A9D8F]"
+                  className="rounded-lg border border-line bg-base px-3 py-2 text-sm text-white outline-none focus:border-brand"
                 />
               </label>
-              <label className="flex flex-col gap-1 text-xs text-slate-400 sm:col-span-2">
+              <label className="flex flex-col gap-1 text-xs text-muted sm:col-span-2">
                 Session
                 <input
                   value={session}
                   onChange={(e) => setSession(e.target.value)}
                   placeholder="créée au démarrage"
-                  className="rounded-lg border border-white/15 bg-[#0F1B2D] px-3 py-2 text-sm text-white outline-none focus:border-[#2A9D8F]"
+                  className="rounded-lg border border-line bg-base px-3 py-2 text-sm text-white outline-none focus:border-brand"
                 />
               </label>
-              <label className="flex flex-col gap-1 text-xs text-slate-400 sm:col-span-2">
+              <label className="flex flex-col gap-1 text-xs text-muted sm:col-span-2">
                 Lumière
                 <select
                   value={lighting}
                   onChange={(e) => setLighting(e.target.value as Lighting)}
-                  className="rounded-lg border border-white/15 bg-[#0F1B2D] px-3 py-2 text-sm text-white"
+                  className="rounded-lg border border-line bg-base px-3 py-2 text-sm text-white"
                 >
                   <option value="jour">Jour / bonne lumière</option>
                   <option value="faible">Lumière faible</option>
                   <option value="nuit">Nuit</option>
                 </select>
               </label>
-              <label className="flex items-center gap-2 self-end pb-2 text-sm text-slate-300 sm:col-span-2">
-                <input type="checkbox" checked={glasses} onChange={(e) => setGlasses(e.target.checked)} className="accent-[#2A9D8F]" />
+              <label className="flex items-center gap-2 self-end pb-2 text-sm text-soft sm:col-span-2">
+                <input type="checkbox" checked={glasses} onChange={(e) => setGlasses(e.target.checked)} className="accent-brand" />
                 Porte des lunettes
               </label>
             </div>
@@ -620,7 +620,7 @@ export default function DataCollector() {
               <canvas ref={overlayRef} className="absolute inset-0 h-full w-full -scale-x-100 object-cover" />
               <div ref={flashRef} className="pointer-events-none absolute inset-0 bg-white opacity-0" />
               {!running && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-8 text-center text-slate-300">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-8 text-center text-soft">
                   <p className="text-lg font-semibold text-white">Caméra arrêtée</p>
                   <p className="max-w-md text-sm">
                     Renseignez la personne filmée, puis démarrez la caméra. Les cadres blancs montrent les zones découpées
@@ -650,7 +650,7 @@ export default function DataCollector() {
                 </div>
               )}
               {running && mode === "auto" && recording && (
-                <div className="absolute right-3 top-3 flex items-center gap-2 rounded-md bg-[#E5383B] px-2 py-1 text-xs font-bold">
+                <div className="absolute right-3 top-3 flex items-center gap-2 rounded-md bg-danger px-2 py-1 text-xs font-bold">
                   <span className="alert-flash inline-block h-2 w-2 rounded-full bg-white" /> ENREGISTREMENT AUTO
                 </div>
               )}
@@ -665,15 +665,15 @@ export default function DataCollector() {
                       }}
                       width={96}
                       height={96}
-                      className="h-16 w-16 rounded-md border border-white/10 bg-black"
+                      className="h-16 w-16 rounded-md border border-line bg-black"
                     />
-                    <span className="text-[10px] text-slate-400">
+                    <span className="text-[10px] text-muted">
                       {p === "oeil_d" ? "œil droit" : p === "oeil_g" ? "œil gauche" : "bouche"}
                     </span>
                   </div>
                 ))}
               </div>
-              <p className="max-w-xs text-xs text-slate-400">
+              <p className="max-w-xs text-xs text-muted">
                 Images enregistrées : 96 × 96 px, redressées. Une capture toutes les {everyN} images vidéo.
               </p>
             </div>
@@ -696,18 +696,18 @@ export default function DataCollector() {
                     setHeld([]);
                   }}
                   className={`rounded-lg border px-3 py-2 text-left transition ${
-                    mode === m ? "border-[#2A9D8F] bg-[#2A9D8F]/20" : "border-white/10 hover:border-white/30"
+                    mode === m ? "border-brand bg-brand/20" : "border-line hover:border-muted"
                   }`}
                 >
                   <p className="text-sm font-semibold">{label}</p>
-                  <p className="text-xs text-slate-400">{hint}</p>
+                  <p className="text-xs text-muted">{hint}</p>
                 </button>
               ))}
             </div>
 
             {mode === "manuel" ? (
               <>
-                <p className="mb-3 text-sm text-slate-300">
+                <p className="mb-3 text-sm text-soft">
                   <b>Maintenez</b> la touche pendant que la personne prend la pose : les images partent en rafale. Vous
                   pouvez aussi maintenir le bouton à la souris.
                 </p>
@@ -731,12 +731,12 @@ export default function DataCollector() {
                     );
                   })}
                 </div>
-                <label className="mt-3 flex items-center gap-2 text-xs text-slate-300">
+                <label className="mt-3 flex items-center gap-2 text-xs text-soft">
                   <input
                     type="checkbox"
                     checked={rejectInconsistent}
                     onChange={(e) => setRejectInconsistent(e.target.checked)}
-                    className="accent-[#2A9D8F]"
+                    className="accent-brand"
                   />
                   Refuser une image si Google est sûr du contraire (ex. touche F mais yeux bien ouverts)
                 </label>
@@ -748,7 +748,7 @@ export default function DataCollector() {
                     onClick={toggleRecording}
                     disabled={!running}
                     className={`rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-40 ${
-                      recording ? "bg-[#E5383B]" : "bg-[#2A9D8F]"
+                      recording ? "bg-danger" : "bg-brand"
                     }`}
                   >
                     {recording ? "■ Arrêter l’enregistrement" : "● Lancer l’enregistrement auto"}
@@ -758,7 +758,7 @@ export default function DataCollector() {
                       type="checkbox"
                       checked={autoTasks.yeux}
                       onChange={(e) => setAutoTasks((t) => ({ ...t, yeux: e.target.checked }))}
-                      className="accent-[#2A9D8F]"
+                      className="accent-brand"
                     />
                     yeux
                   </label>
@@ -767,7 +767,7 @@ export default function DataCollector() {
                       type="checkbox"
                       checked={autoTasks.bouche}
                       onChange={(e) => setAutoTasks((t) => ({ ...t, bouche: e.target.checked }))}
-                      className="accent-[#2A9D8F]"
+                      className="accent-brand"
                     />
                     bouche
                   </label>
@@ -778,31 +778,31 @@ export default function DataCollector() {
                   <Slider label="Bâillement si jawOpen ≥" value={auto.yawnMin} min={0.2} max={0.9} step={0.05} onChange={(v) => setAuto((a) => ({ ...a, yawnMin: v }))} />
                   <Slider label="Bouche normale si jawOpen ≤" value={auto.normalMax} min={0.02} max={0.3} step={0.01} onChange={(v) => setAuto((a) => ({ ...a, normalMax: v }))} />
                 </div>
-                <p className="mt-3 text-xs text-slate-400">
+                <p className="mt-3 text-xs text-muted">
                   Entre les deux seuils, l’image est jugée douteuse et n’est pas enregistrée. Vérifiez quand même les
                   images dans la galerie plus bas : le modèle de Google peut se tromper.
                 </p>
               </>
             )}
 
-            <div className="mt-4 grid gap-3 border-t border-white/10 pt-4 sm:grid-cols-2">
-              <label className="flex flex-col gap-1 text-xs text-slate-300">
+            <div className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-xs text-soft">
                 <span className="flex justify-between">
                   <span>Garder 1 image vidéo sur</span>
                   <span className="font-mono text-white">{everyN}</span>
                 </span>
-                <input type="range" min={1} max={15} step={1} value={everyN} onChange={(e) => setEveryN(Number(e.target.value))} className="accent-[#F2A541]" />
-                <span className="text-slate-500">Plus haut = images moins répétitives (conseillé : 5 à 10).</span>
+                <input type="range" min={1} max={15} step={1} value={everyN} onChange={(e) => setEveryN(Number(e.target.value))} className="accent-brand" />
+                <span className="text-faint">Plus haut = images moins répétitives (conseillé : 5 à 10).</span>
               </label>
-              <label className="flex items-center gap-2 text-sm text-slate-300">
-                <input type="checkbox" checked={tickSound} onChange={(e) => setTickSound(e.target.checked)} className="accent-[#2A9D8F]" />
+              <label className="flex items-center gap-2 text-sm text-soft">
+                <input type="checkbox" checked={tickSound} onChange={(e) => setTickSound(e.target.checked)} className="accent-brand" />
                 Petit bip à chaque capture (utile les yeux fermés)
               </label>
             </div>
           </Card>
 
           <Card title="Protocole conseillé (par personne)">
-            <ol className="list-decimal space-y-1 pl-5 text-sm text-slate-300">
+            <ol className="list-decimal space-y-1 pl-5 text-sm text-soft">
               <li>
                 <b>O</b> · yeux ouverts, regard vers la route : 30 s en bougeant un peu la tête.
               </li>
@@ -823,7 +823,7 @@ export default function DataCollector() {
           <Card title="Cette séance">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {CLASS_KEYS.map((cls) => (
-                <div key={cls} className="rounded-lg bg-white/5 px-2 py-2 text-center">
+                <div key={cls} className="rounded-lg bg-raised px-2 py-2 text-center">
                   <p className="text-[11px]" style={{ color: CLASSES[cls].color }}>
                     {CLASSES[cls].label}
                   </p>
@@ -831,7 +831,7 @@ export default function DataCollector() {
                 </div>
               ))}
             </div>
-            <p className="mt-3 text-xs text-slate-400">
+            <p className="mt-3 text-xs text-muted">
               {sessionTotal} images enregistrées · {rejectedTotal} refusées
               {rejectedTotal > 0 &&
                 ` (incohérentes ${rejected.incoherent}, hors cadre ${rejected.horsCadre}, tête tournée ${rejected.tete}, surcharge ${rejected.surcharge})`}
@@ -839,7 +839,7 @@ export default function DataCollector() {
             <button
               onClick={undoLastBurst}
               disabled={sessionTotal === 0}
-              className="mt-3 rounded-lg border border-[#E76F51] px-3 py-1.5 text-sm text-[#E76F51] hover:bg-[#E76F51]/10 disabled:opacity-40"
+              className="mt-3 rounded-lg border border-danger px-3 py-1.5 text-sm text-danger hover:bg-danger/10 disabled:opacity-40"
             >
               ↶ Annuler la dernière rafale
             </button>
@@ -873,7 +873,7 @@ export default function DataCollector() {
                   <div key={cls}>
                     <div className="flex justify-between text-xs">
                       <span style={{ color: CLASSES[cls].color }}>
-                        {CLASSES[cls].label} <span className="text-slate-500">· data/{CLASSES[cls].dir}</span>
+                        {CLASSES[cls].label} <span className="text-faint">· data/{CLASSES[cls].dir}</span>
                       </span>
                       <span className="font-mono">
                         {n} / {TARGET_PER_CLASS}
@@ -889,14 +889,14 @@ export default function DataCollector() {
                 );
               })}
             </div>
-            <p className="mt-3 text-xs text-slate-400">
+            <p className="mt-3 text-xs text-muted">
               {stats ? `${stats.total} images · ${persons.length} personne(s)` : "Chargement…"} · chaque œil compte comme
               une image.
             </p>
 
             {persons.length > 0 && (
               <table className="mt-3 w-full text-xs">
-                <thead className="text-slate-400">
+                <thead className="text-muted">
                   <tr>
                     <th className="py-1 text-left font-normal">Personne</th>
                     {CLASS_KEYS.map((cls) => (
@@ -920,39 +920,39 @@ export default function DataCollector() {
                 </tbody>
               </table>
             )}
-            {stats && <p className="mt-3 break-all text-[11px] text-slate-500">Dossier : {stats.dataDir}</p>}
+            {stats && <p className="mt-3 break-all text-[11px] text-faint">Dossier : {stats.dataDir}</p>}
           </Card>
 
           <Card title="4 · Préparer l’entraînement">
-            <p className="text-sm text-slate-300">
+            <p className="text-sm text-soft">
               Crée <code>data/split.csv</code> : 70 % entraînement, 15 % validation, 15 % test. Une même personne reste
               dans un seul ensemble.
             </p>
             <button
               onClick={makeSplit}
               disabled={!stats || stats.total === 0}
-              className="mt-3 rounded-lg bg-[#7B5EA7] px-4 py-2 text-sm font-semibold hover:brightness-110 disabled:opacity-40"
+              className="mt-3 rounded-lg bg-mouth px-4 py-2 text-sm font-semibold hover:brightness-110 disabled:opacity-40"
             >
               Créer le découpage
             </button>
-            {splitMsg && <p className="mt-2 text-sm text-[#E76F51]">{splitMsg}</p>}
+            {splitMsg && <p className="mt-2 text-sm text-danger">{splitMsg}</p>}
             {stats?.split && (
               <div className="mt-3 text-xs">
-                <p className="text-slate-400">
+                <p className="text-muted">
                   Dernier découpage : {new Date(stats.split.createdAt).toLocaleString("fr-FR")} · {stats.split.mode}
                 </p>
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   {(["train", "val", "test"] as const).map((s) => (
-                    <div key={s} className="rounded-lg bg-white/5 p-2">
+                    <div key={s} className="rounded-lg bg-raised p-2">
                       <p className="font-semibold">
                         {s === "train" ? "Entraînement" : s === "val" ? "Validation" : "Test"}
                       </p>
                       <p className="font-mono text-lg">{stats.split!.sets[s].images}</p>
-                      <p className="truncate text-slate-400">{stats.split!.sets[s].persons.join(", ") || "–"}</p>
+                      <p className="truncate text-muted">{stats.split!.sets[s].persons.join(", ") || "–"}</p>
                     </div>
                   ))}
                 </div>
-                <p className="mt-2 text-slate-500">
+                <p className="mt-2 text-faint">
                   L’augmentation (rotation, luminosité, flou, miroir) se fera au moment de l’entraînement.
                 </p>
               </div>
@@ -981,24 +981,24 @@ export default function DataCollector() {
             ))}
             <button
               onClick={() => loadReview(reviewCls)}
-              className="rounded-lg border border-white/20 px-3 py-1.5 text-sm hover:bg-white/10"
+              className="rounded-lg border border-line px-3 py-1.5 text-sm hover:bg-white/10"
             >
               ⟳ Afficher
             </button>
             {selected.size > 0 && (
               <button
                 onClick={() => deleteFiles([...selected])}
-                className="rounded-lg bg-[#E76F51] px-3 py-1.5 text-sm font-semibold"
+                className="rounded-lg bg-danger px-3 py-1.5 text-sm font-semibold"
               >
                 Supprimer {selected.size} image(s)
               </button>
             )}
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-muted">
               Cliquez sur les images mal étiquetées pour les sélectionner, puis supprimez-les.
             </span>
           </div>
           {reviewFiles.length === 0 ? (
-            <p className="text-sm text-slate-500">Choisissez une classe pour afficher ses images (les plus récentes d’abord).</p>
+            <p className="text-sm text-faint">Choisissez une classe pour afficher ses images (les plus récentes d’abord).</p>
           ) : (
             <>
               <div className="grid grid-cols-6 gap-1.5 sm:grid-cols-10 lg:grid-cols-15">
@@ -1015,7 +1015,7 @@ export default function DataCollector() {
                           return n;
                         })
                       }
-                      className={`relative rounded ${on ? "ring-2 ring-[#E76F51]" : ""}`}
+                      className={`relative rounded ${on ? "ring-2 ring-danger" : ""}`}
                       title={f}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1030,7 +1030,7 @@ export default function DataCollector() {
                   );
                 })}
               </div>
-              <p className="mt-2 text-xs text-slate-400">
+              <p className="mt-2 text-xs text-muted">
                 {reviewFiles.length} affichées sur {reviewTotal}
                 {reviewFiles.length < reviewTotal && (
                   <button onClick={() => loadReview(reviewCls, reviewFiles.length)} className="ml-3 underline">

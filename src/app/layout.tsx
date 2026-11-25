@@ -7,7 +7,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Détection de somnolence du conducteur",
+  title: "DriveAlert AI · Détection de somnolence",
   description: "PFA EMSI · détection de somnolence en temps réel avec MediaPipe Face Landmarker",
 };
 
