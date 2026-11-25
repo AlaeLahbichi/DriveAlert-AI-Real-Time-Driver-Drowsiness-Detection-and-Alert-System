@@ -29,6 +29,7 @@ import { useIot, type Iot } from "@/lib/iot";
 import IotPanel from "./IotPanel";
 import { C, LEVEL_COLORS } from "@/lib/theme";
 import { saveSession, type SessionLog } from "@/lib/logStore";
+import { openCamera } from "@/lib/camera";
 
 type Status = "loading" | "ready" | "running" | "error";
 type SideTab = "mesures" | "iot" | "events" | "reglages";
@@ -366,10 +367,7 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
   const start = async () => {
     alarmRef.current.unlock();
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-        audio: false,
-      });
+      const stream = await openCamera({ width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" });
       streamRef.current = stream;
       const video = videoRef.current!;
       video.srcObject = stream;

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useFaceLandmarker } from "@/lib/useFaceLandmarker";
 import { eyeAspectRatio, headPoseFromMatrix, LEFT_EYE, mouthAspectRatio, RIGHT_EYE, type Point } from "@/lib/metrics";
 import { cropToDataUrl, drawRegion, isOutside, regionFor, type Region } from "@/lib/crop";
+import { openCamera } from "@/lib/camera";
 import {
   CLASSES,
   CLASS_KEYS,
@@ -432,10 +433,7 @@ export default function DataCollector() {
       setSession(`s${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`);
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
-        audio: false,
-      });
+      const stream = await openCamera({ width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" });
       streamRef.current = stream;
       const video = videoRef.current!;
       video.srcObject = stream;
