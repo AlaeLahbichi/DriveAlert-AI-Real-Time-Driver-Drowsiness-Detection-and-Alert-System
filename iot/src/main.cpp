@@ -3,6 +3,7 @@
 // Les messages de la plateforme arrivent par MQTT (broker public HiveMQ) :
 //   drivealert/pfa-alae-01/alerte     <- {"niveau":3,"cause":"Yeux fermes 2.1 s","lat":33.57,"lon":-7.58}
 //   drivealert/pfa-alae-01/heartbeat  <- même format, toutes les 2 s (signe de vie + niveau courant)
+//   drivealert/pfa-alae-01/recu       -> accusé de réception immédiat de chaque alerte (mesure de latence)
 //   drivealert/pfa-alae-01/ack        -> le conducteur a appuyé sur le bouton
 //   drivealert/pfa-alae-01/journal    -> chaque événement du journal
 //   drivealert/pfa-alae-01/etat       -> {"enLigne":true|false} (retenu ; « false » publié par le broker si le boîtier tombe)
@@ -95,7 +96,8 @@ unsigned long dernierSigneDeVie = 0;
 
 bool sdOk = false;
 
-bool sosEnvoye = false;           // un SOS est parti pour l'alerte en cours
+bool sosEnvoye = false;           // un SOS a été demandé pour l'alerte en cours
+bool sosConfirme = false;         // ... et WhatsApp a confirmé l'envoi
 unsigned long dernierSos = 0;     // millis() du dernier SOS envoyé
 unsigned long prochainEssaiSos = 0;
 bool wifiConnecte = false;
@@ -118,6 +120,9 @@ void publier(const char* nom, JsonDocument& doc, bool retenu = false) {
 }
 
 /** Sans identifiants Green-API dans secrets.h, le SOS est simulé (affiché dans le moniteur série). */
+void majSorties();  // définie plus bas
+void majEcran();
+
 bool sosSimule() { return strlen(GREENAPI_URL) == 0 || strlen(GREENAPI_ID_INSTANCE) == 0 || strlen(GREENAPI_TOKEN) == 0; }
 
 
@@ -248,7 +253,8 @@ void majEcran() {
                        : (niveau > 0 && cause.length() ? sansAccents(cause) : String(defauts[niveau]));
   if (niveau == 3 && !acquitte) {  // décompte avant l'envoi du SOS
     unsigned long ecoule = millis() - debutNiveau;
-    l2 = sosEnvoye ? String(sosSimule() ? "SOS ENVOYE (sim)" : "SOS ENVOYE")
+    l2 = sosConfirme ? String(sosSimule() ? "SOS ENVOYE (sim)" : "SOS ENVOYE")
+         : sosEnvoye ? String("SOS: envoi...")
          : ecoule < DELAI_SOS_MS ? "SOS dans " + String((DELAI_SOS_MS - ecoule + 999) / 1000) + "s"
                                  : String("SOS en cours...");
   }
@@ -270,6 +276,8 @@ void appliquerNiveau(int n, const String& c) {
     niveau = n;
     acquitte = false;
     debutNiveau = millis();
+    majSorties();  // réaction immédiate (LED, buzzer) avant d'écrire le journal
+    majEcran();
     journaliser("NIVEAU", niveau, cause);
   }
 }
@@ -432,6 +440,14 @@ void recevoirMqtt(char* nomTopic, byte* contenu, unsigned int taille) {
     return;
   }
   traiterMessage(doc);
+
+  // Accusé de réception immédiat : la plateforme mesure ainsi la latence aller-retour.
+  if (String(nomTopic).endsWith("/alerte") && doc["t"].is<long long>()) {
+    JsonDocument recu;
+    recu["t"] = doc["t"].as<long long>();
+    recu["niveau"] = niveau;
+    publier("recu", recu);
+  }
 }
 
 void majMqtt() {
@@ -469,8 +485,25 @@ void majMqtt() {
 // =====================================================================
 // SOS WhatsApp (Green-API) : niveau 3 sans réponse pendant 10 s
 // =====================================================================
-/** Appelle une méthode Green-API (sendMessage, sendLocation...). Ne journalise jamais l'URL (elle contient le jeton). */
-bool appelGreenApi(const char* methode, JsonDocument& corps) {
+// L'envoi HTTPS peut prendre plusieurs secondes : il tourne dans une tâche FreeRTOS séparée
+// (cœur 0) pour que le buzzer, les LED, le bouton et MQTT restent en temps réel.
+enum TypeEnvoi : uint8_t { ENVOI_SOS, ENVOI_RAPPEL, ENVOI_FIN };
+struct EnvoiWhatsApp {
+  String texte;
+  bool avecPosition;
+  TypeEnvoi type;
+  String lat, lon;
+};
+struct ResultatEnvoi {
+  TypeEnvoi type;
+  bool ok;
+  char detail[64];
+};
+QueueHandle_t fileEnvois = nullptr;    // boucle principale -> tâche d'envoi
+QueueHandle_t fileResultats = nullptr; // tâche d'envoi -> boucle principale (qui écrit le journal)
+
+/** Appelle une méthode Green-API. Renvoie "" si OK, sinon la raison. N'affiche jamais l'URL (elle contient le jeton). */
+String appelGreenApi(const char* methode, JsonDocument& corps) {
   corps["chatId"] = String(WHATSAPP_NUMERO) + "@c.us";
   String json;
   serializeJson(corps, json);
@@ -480,46 +513,61 @@ bool appelGreenApi(const char* methode, JsonDocument& corps) {
   HTTPClient http;
   http.setTimeout(10000);
   String url = String(GREENAPI_URL) + "/waInstance" + GREENAPI_ID_INSTANCE + "/" + methode + "/" + GREENAPI_TOKEN;
-  if (!http.begin(client, url)) {
-    journaliser("SOS_ECHEC", niveau, "connexion a Green-API impossible");
-    return false;
-  }
+  if (!http.begin(client, url)) return "connexion a Green-API impossible";
   http.addHeader("Content-Type", "application/json");
   int code = http.POST(json);
   http.end();
-  if (code != 200) {
-    journaliser("SOS_ECHEC", niveau, String(methode) + " : reponse Green-API " + code);
-    return false;
-  }
-  return true;
+  return code == 200 ? "" : String(methode) + " : reponse Green-API " + code;
 }
 
-/** Envoie un message WhatsApp (et, si demandé, la position sous forme de carte). */
-bool envoyerWhatsApp(const String& texte, bool avecPosition = false) {
+void tacheEnvoiWhatsApp(void*) {
+  for (;;) {
+    EnvoiWhatsApp* e = nullptr;
+    if (xQueueReceive(fileEnvois, &e, portMAX_DELAY) != pdTRUE || !e) continue;
+
+    JsonDocument message;
+    message["message"] = e->texte;
+    String erreur = appelGreenApi("sendMessage", message);
+    if (erreur.isEmpty() && e->avecPosition) {  // carte WhatsApp cliquable (un échec ici n'annule pas le SOS)
+      JsonDocument position;
+      position["latitude"] = e->lat.toFloat();
+      position["longitude"] = e->lon.toFloat();
+      position["nameLocation"] = "Position du conducteur";
+      position["address"] = "DriveAlert AI - SOS";
+      appelGreenApi("sendLocation", position);
+    }
+    ResultatEnvoi r{e->type, erreur.isEmpty(), {0}};
+    strncpy(r.detail, erreur.isEmpty() ? "WhatsApp envoye" : erreur.c_str(), sizeof r.detail - 1);
+    xQueueSend(fileResultats, &r, 0);
+    delete e;
+  }
+}
+
+void demarrerTacheWhatsApp() {
+  fileEnvois = xQueueCreate(4, sizeof(EnvoiWhatsApp*));
+  fileResultats = xQueueCreate(4, sizeof(ResultatEnvoi));
+  xTaskCreatePinnedToCore(tacheEnvoiWhatsApp, "whatsapp", 12288, nullptr, 1, nullptr, 0);
+}
+
+/** Demande l'envoi d'un message WhatsApp, sans attendre. Le résultat arrive plus tard dans fileResultats. */
+void envoyerWhatsApp(const String& texte, bool avecPosition, TypeEnvoi type) {
   Serial.println("----- message WhatsApp -----");
   Serial.println(texte);
   Serial.println("----------------------------");
 
-  if (sosSimule()) return true;  // pas d'identifiants : le message est seulement affiché ci-dessus
-  if (!wifiConnecte) {
-    journaliser("SOS_ECHEC", niveau, "pas de Wi-Fi");
-    return false;
+  ResultatEnvoi immediat{type, false, {0}};
+  if (sosSimule()) {  // pas d'identifiants : le message est seulement affiché ci-dessus
+    immediat.ok = true;
+    strncpy(immediat.detail, "simule (Green-API non configure)", sizeof immediat.detail - 1);
+  } else if (!wifiConnecte) {
+    strncpy(immediat.detail, "pas de Wi-Fi", sizeof immediat.detail - 1);
+  } else {
+    auto* e = new EnvoiWhatsApp{texte, avecPosition, type, positionLat, positionLon};
+    if (xQueueSend(fileEnvois, &e, 0) == pdTRUE) return;
+    delete e;
+    strncpy(immediat.detail, "file d'envoi pleine", sizeof immediat.detail - 1);
   }
-  afficher("SOS...", "Envoi WhatsApp");
-
-  JsonDocument message;
-  message["message"] = texte;
-  if (!appelGreenApi("sendMessage", message)) return false;
-
-  if (avecPosition) {  // carte WhatsApp cliquable (un échec ici n'annule pas le SOS déjà parti)
-    JsonDocument position;
-    position["latitude"] = positionLat.toFloat();
-    position["longitude"] = positionLon.toFloat();
-    position["nameLocation"] = "Position du conducteur";
-    position["address"] = "DriveAlert AI - SOS";
-    appelGreenApi("sendLocation", position);
-  }
-  return true;
+  xQueueSend(fileResultats, &immediat, 0);
 }
 
 String messageSos(bool rappel) {
@@ -534,15 +582,37 @@ String messageSos(bool rappel) {
   return m;
 }
 
+/** Résultats des envois (écrits dans le journal ici, dans la boucle principale). */
+void lireResultatsWhatsApp() {
+  ResultatEnvoi r;
+  while (xQueueReceive(fileResultats, &r, 0) == pdTRUE) {
+    if (r.ok) {
+      if (r.type == ENVOI_SOS) {
+        sosConfirme = true;
+        journaliser("SOS_ENVOYE", niveau, r.detail);
+      } else if (r.type == ENVOI_RAPPEL) {
+        journaliser("SOS_RAPPEL", niveau, r.detail);
+      }
+    } else {
+      journaliser("SOS_ECHEC", niveau, r.detail);
+      if (r.type == ENVOI_SOS && sosEnvoye) {  // on réessaiera dans 30 s
+        sosEnvoye = false;
+        prochainEssaiSos = millis() + NOUVEL_ESSAI_SOS_MS;
+      }
+    }
+  }
+}
+
 void majSos() {
+  lireResultatsWhatsApp();
   unsigned long maintenant = millis();
   bool urgence = niveau == 3 && !acquitte;
 
   if (sosEnvoye && !urgence) {  // fin de l'urgence : on rassure les proches
-    sosEnvoye = false;
+    sosEnvoye = sosConfirme = false;
     String fin = acquitte ? "✅ *DriveAlert AI* : le conducteur a répondu à l'alerte. Il va bien."
                           : "ℹ️ *DriveAlert AI* : l'alerte grave est terminée (niveau " + String(niveau) + ").";
-    envoyerWhatsApp(fin);
+    envoyerWhatsApp(fin, false, ENVOI_FIN);
     journaliser("SOS_FIN", niveau, acquitte ? "le conducteur a repondu" : "niveau redescendu");
     return;
   }
@@ -554,16 +624,12 @@ void majSos() {
 
   if (!sosEnvoye) {
     if (maintenant < prochainEssaiSos) return;
-    if (envoyerWhatsApp(messageSos(false), true)) {
-      sosEnvoye = true;
-      dernierSos = maintenant;
-      journaliser("SOS_ENVOYE", niveau, sosSimule() ? "simule (Green-API non configure)" : "WhatsApp envoye");
-    } else {
-      prochainEssaiSos = maintenant + NOUVEL_ESSAI_SOS_MS;
-    }
+    sosEnvoye = true;
+    dernierSos = maintenant;
+    envoyerWhatsApp(messageSos(false), true, ENVOI_SOS);
   } else if (maintenant - dernierSos >= RAPPEL_SOS_MS) {
     dernierSos = maintenant;
-    if (envoyerWhatsApp(messageSos(true), true)) journaliser("SOS_RAPPEL", niveau, sosSimule() ? "simule" : "WhatsApp envoye");
+    envoyerWhatsApp(messageSos(true), true, ENVOI_RAPPEL);
   }
 }
 
@@ -670,6 +736,9 @@ void setup() {
   mqtt.setServer(MQTT_HOTE, MQTT_PORT);
   mqtt.setCallback(recevoirMqtt);
   mqtt.setBufferSize(1024);
+  mqtt.setSocketTimeout(3);  // une reconnexion ratée ne bloque pas plus de 3 s (15 s par défaut)
+  mqtt.setKeepAlive(10);     // coupure détectée plus vite
+  demarrerTacheWhatsApp();
   demarrerWifi();  // se connecte en arrière-plan pendant l'auto-test
   autoTest();
   Serial.println(!sosSimule() ? "SOS WhatsApp : Green-API configure"
@@ -689,5 +758,5 @@ void loop() {
   majSos();
   majSorties();
   majEcran();
-  delay(5);
+  delay(1);
 }

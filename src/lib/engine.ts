@@ -60,7 +60,7 @@ export const DEFAULT_SETTINGS: Settings = {
   perclosWarn: 0.15,
   perclosAlert: 0.3,
   faceLostS: 2.0,
-  holdS: 1.5,
+  holdS: 0.5, // court : le niveau suit le conducteur presque en temps réel
 };
 
 export type FaceMeasures = {

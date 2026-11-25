@@ -19,6 +19,8 @@ export type Position = { lat: number; lon: number; precision: number };
 export type BoxState = { enLigne: boolean; ip?: string; sos?: "whatsapp" | "simulation" };
 export type BoxAck = { type: "alerte" | "pause"; niveau: number; temps: string; at: number };
 export type BoxLog = { id: number; temps: string; evenement: string; niveau: number; detail: string };
+/** Latence aller-retour plateforme -> broker -> ESP32 -> broker -> plateforme (ms). */
+export type Latency = { last: number; avg: number; min: number; max: number; count: number };
 const MAX_LOG = 30;
 
 export function useIot(version: "v1" | "v2") {
@@ -33,6 +35,7 @@ export function useIot(version: "v1" | "v2") {
   const [box, setBox] = useState<BoxState | null>(null);
   const [lastAck, setLastAck] = useState<BoxAck | null>(null);
   const [log, setLog] = useState<BoxLog[]>([]);
+  const [latency, setLatency] = useState<Latency | null>(null);
 
   /** Message envoyé au boîtier (alerte et heartbeat ont le même format). */
   const payload = useCallback(() => {
@@ -62,7 +65,7 @@ export function useIot(version: "v1" | "v2") {
         client.on("connect", () => {
           setBroker("connecte");
           setBrokerError(null);
-          client?.subscribe([IOT_PREFIX + "etat", IOT_PREFIX + "ack", IOT_PREFIX + "journal"]);
+          client?.subscribe([IOT_PREFIX + "etat", IOT_PREFIX + "ack", IOT_PREFIX + "journal", IOT_PREFIX + "recu"]);
         });
         let nextId = 0;
         client.on("message", (topic, raw) => {
@@ -79,7 +82,20 @@ export function useIot(version: "v1" | "v2") {
           const name = topic.slice(IOT_PREFIX.length);
           if (name === "etat") setBox(data as BoxState);
           else if (name === "ack") setLastAck({ ...(data as Omit<BoxAck, "at">), at: Date.now() });
-          else if (name === "journal")
+          else if (name === "recu" && typeof data.t === "number") {
+            const ms = Date.now() - data.t;
+            setLatency((l) =>
+              l
+                ? {
+                    last: ms,
+                    avg: (l.avg * l.count + ms) / (l.count + 1),
+                    min: Math.min(l.min, ms),
+                    max: Math.max(l.max, ms),
+                    count: l.count + 1,
+                  }
+                : { last: ms, avg: ms, min: ms, max: ms, count: 1 },
+            );
+          } else if (name === "journal")
             setLog((prev) => [{ ...(data as Omit<BoxLog, "id">), id: nextId++ }, ...prev].slice(0, MAX_LOG));
         });
         client.on("reconnect", () => setBroker("connexion"));
@@ -107,13 +123,19 @@ export function useIot(version: "v1" | "v2") {
     };
   }, [payload]);
 
+  /** Envoie une alerte de test (niveau inchangé) pour mesurer la latence avec le boîtier. */
+  const ping = useCallback(() => {
+    const c = clientRef.current;
+    if (c?.connected) c.publish(IOT_PREFIX + "alerte", payload());
+  }, [payload]);
+
   /** À appeler quand le niveau change : prévient le boîtier tout de suite. */
   const publishLevel = useCallback(
     (niveau: Level, cause: string) => {
       alerteRef.current = { niveau, cause };
       const c = clientRef.current;
       if (!c?.connected) return;
-      c.publish(IOT_PREFIX + "alerte", payload(), { qos: 1 });
+      c.publish(IOT_PREFIX + "alerte", payload()); // QoS 0 : le plus rapide (le heartbeat corrige une perte)
       setSent({ niveau, at: Date.now() });
     },
     [payload],
@@ -137,7 +159,7 @@ export function useIot(version: "v1" | "v2") {
     );
   }, []);
 
-  return { broker, brokerError, sent, position, positionError, box, lastAck, log, publishLevel, sharePosition };
+  return { broker, brokerError, sent, position, positionError, box, lastAck, log, latency, ping, publishLevel, sharePosition };
 }
 
 export type Iot = ReturnType<typeof useIot>;

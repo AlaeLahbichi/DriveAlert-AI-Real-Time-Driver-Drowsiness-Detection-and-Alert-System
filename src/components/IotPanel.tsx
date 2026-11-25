@@ -50,7 +50,7 @@ const time = (at: number) => new Date(at).toLocaleTimeString("fr-FR");
 
 /** Carte « Boîtier IoT » : liaison MQTT, état de l'ESP32, réponse du conducteur et journal du boîtier. */
 export default function IotPanel({ iot }: { iot: Iot }) {
-  const { broker, brokerError, sent, position, positionError, box, lastAck, log, sharePosition } = iot;
+  const { broker, brokerError, sent, position, positionError, box, lastAck, log, latency, ping, sharePosition } = iot;
   const lastSos = log.find((e) => e.evenement === "SOS_ENVOYE" || e.evenement === "SOS_FIN");
 
   return (
@@ -88,6 +88,25 @@ export default function IotPanel({ iot }: { iot: Iot }) {
         </Row>
         <Row label="Dernier niveau envoyé">
           <span className="font-mono">{sent ? `${sent.niveau} · ${time(sent.at)}` : "–"}</span>
+        </Row>
+        <Row label="Latence (aller-retour)">
+          {latency ? (
+            <span className="font-mono" title={`moyenne ${latency.avg.toFixed(0)} ms · min ${latency.min} · max ${latency.max} · ${latency.count} mesures`}>
+              <span style={{ color: latency.last < 300 ? "#2A9D8F" : latency.last < 800 ? "#F2A541" : "#E5383B" }}>
+                {latency.last} ms
+              </span>
+              <span className="text-xs text-slate-400"> · moy. {latency.avg.toFixed(0)}</span>
+            </span>
+          ) : (
+            <span className="text-slate-500">–</span>
+          )}
+          <button
+            onClick={ping}
+            disabled={broker !== "connecte" || !box?.enLigne}
+            className="rounded-md bg-white/10 px-2 py-1 text-xs hover:bg-white/20 disabled:opacity-40"
+          >
+            Tester
+          </button>
         </Row>
         <Row label="Réponse du conducteur">
           {lastAck ? (
