@@ -49,3 +49,7 @@ graphify-out/
 # entraînement V2
 training/.venv/
 training/runs/
+
+# boîtier IoT (compilation PlatformIO)
+iot/.pio/
+iot/include/secrets.h

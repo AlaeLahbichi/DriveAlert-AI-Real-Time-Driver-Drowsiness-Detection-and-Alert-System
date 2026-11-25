@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "author": "Alae Lahbichi",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-lcd1602", "id": "lcd", "top": -150, "left": 120, "attrs": { "pins": "i2c" } },
+
+    { "type": "wokwi-led", "id": "ledVerte", "top": 30, "left": -180, "attrs": { "color": "limegreen", "label": "Normal" } },
+    { "type": "wokwi-led", "id": "ledOrange", "top": 30, "left": -130, "attrs": { "color": "orange", "label": "Vigilance" } },
+    { "type": "wokwi-led", "id": "ledRouge", "top": 30, "left": -80, "attrs": { "color": "red", "label": "Alerte" } },
+    { "type": "wokwi-resistor", "id": "rVerte", "top": 130, "left": -200, "rotate": 90, "attrs": { "value": "220" } },
+    { "type": "wokwi-resistor", "id": "rOrange", "top": 130, "left": -150, "rotate": 90, "attrs": { "value": "220" } },
+    { "type": "wokwi-resistor", "id": "rRouge", "top": 130, "left": -100, "rotate": 90, "attrs": { "value": "220" } },
+
+    { "type": "wokwi-led", "id": "ledVibration", "top": 30, "left": 250, "attrs": { "color": "blue", "label": "Vibration" } },
+    { "type": "wokwi-resistor", "id": "rVibration", "top": 130, "left": 230, "rotate": 90, "attrs": { "value": "220" } },
+
+    { "type": "wokwi-buzzer", "id": "buzzer", "top": 180, "left": 250, "attrs": { "volume": "0.3" } },
+    { "type": "wokwi-pushbutton", "id": "bouton", "top": 260, "left": -180, "attrs": { "color": "red", "label": "J'ai vu", "bounce": "1" } },
+
+    { "type": "wokwi-relay-module", "id": "relais", "top": 300, "left": 200, "attrs": {} },
+    { "type": "wokwi-led", "id": "ledDetresse", "top": 290, "left": 380, "attrs": { "color": "yellow", "label": "Feux detresse" } },
+    { "type": "wokwi-resistor", "id": "rDetresse", "top": 380, "left": 360, "rotate": 90, "attrs": { "value": "220" } },
+
+    { "type": "wokwi-led", "id": "ledConnexion", "top": 30, "left": -30, "attrs": { "color": "white", "label": "Connexion" } },
+    { "type": "wokwi-resistor", "id": "rConnexion", "top": 130, "left": -50, "rotate": 90, "attrs": { "value": "220" } },
+
+    { "type": "wokwi-microsd-card", "id": "sd", "top": 260, "left": -60, "attrs": {} }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+
+    [ "lcd:GND", "esp:GND.2", "black", [] ],
+    [ "lcd:VCC", "esp:5V", "red", [] ],
+    [ "lcd:SDA", "esp:21", "blue", [] ],
+    [ "lcd:SCL", "esp:22", "purple", [] ],
+
+    [ "esp:25", "rVerte:1", "green", [] ],
+    [ "rVerte:2", "ledVerte:A", "green", [] ],
+    [ "ledVerte:C", "esp:GND.1", "black", [] ],
+    [ "esp:26", "rOrange:1", "orange", [] ],
+    [ "rOrange:2", "ledOrange:A", "orange", [] ],
+    [ "ledOrange:C", "esp:GND.1", "black", [] ],
+    [ "esp:27", "rRouge:1", "red", [] ],
+    [ "rRouge:2", "ledRouge:A", "red", [] ],
+    [ "ledRouge:C", "esp:GND.1", "black", [] ],
+
+    [ "esp:19", "rVibration:1", "blue", [] ],
+    [ "rVibration:2", "ledVibration:A", "blue", [] ],
+    [ "ledVibration:C", "esp:GND.3", "black", [] ],
+
+    [ "esp:18", "buzzer:2", "magenta", [] ],
+    [ "buzzer:1", "esp:GND.3", "black", [] ],
+
+    [ "esp:4", "bouton:1.l", "gold", [] ],
+    [ "bouton:2.l", "esp:GND.1", "black", [] ],
+
+    [ "relais:VCC", "esp:5V", "red", [] ],
+    [ "relais:GND", "esp:GND.3", "black", [] ],
+    [ "relais:IN", "esp:23", "cyan", [] ],
+    [ "relais:COM", "esp:3V3", "red", [] ],
+    [ "relais:NO", "rDetresse:1", "yellow", [] ],
+    [ "rDetresse:2", "ledDetresse:A", "yellow", [] ],
+    [ "ledDetresse:C", "esp:GND.3", "black", [] ],
+
+    [ "esp:32", "rConnexion:1", "white", [] ],
+    [ "rConnexion:2", "ledConnexion:A", "white", [] ],
+    [ "ledConnexion:C", "esp:GND.1", "black", [] ],
+
+    [ "sd:VCC", "esp:3V3", "red", [] ],
+    [ "sd:GND", "esp:GND.2", "black", [] ],
+    [ "sd:SCK", "esp:14", "green", [] ],
+    [ "sd:DO", "esp:33", "orange", [] ],
+    [ "sd:DI", "esp:13", "blue", [] ],
+    [ "sd:CS", "esp:5", "violet", [] ]
+  ],
+  "dependencies": {}
+}
