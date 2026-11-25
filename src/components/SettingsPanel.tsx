@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import type { Settings } from "@/lib/engine";
 
 type NumKey = { [K in keyof Settings]: Settings[K] extends number ? K : never }[keyof Settings];
@@ -33,14 +34,14 @@ function Choice<T extends string>({ title, value, options, onPick }: {
 }) {
   return (
     <div>
-      <p className="mb-2 text-xs text-slate-400">{title}</p>
+      <p className="mb-2 text-xs text-muted">{title}</p>
       <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
         {options.map(([v, label]) => (
           <button
             key={v}
             onClick={() => onPick(v)}
             className={`rounded-lg border px-3 py-2 text-sm transition ${
-              value === v ? "border-[#2A9D8F] bg-[#2A9D8F]/20 text-white" : "border-white/10 text-slate-300 hover:border-white/30"
+              value === v ? "border-brand bg-brand/20 text-white" : "border-line text-soft hover:border-muted"
             }`}
           >
             {label}
@@ -51,7 +52,7 @@ function Choice<T extends string>({ title, value, options, onPick }: {
   );
 }
 
-export default function SettingsPanel({ settings, onChange, onReset, withModel = false }: Props) {
+function SettingsPanel({ settings, onChange, onReset, withModel = false }: Props) {
   const sliders = withModel ? [...MODEL_SLIDERS, ...SLIDERS] : SLIDERS;
   return (
     <div className="flex flex-col gap-4">
@@ -74,9 +75,9 @@ export default function SettingsPanel({ settings, onChange, onReset, withModel =
         />
       )}
 
-      <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-x-6 gap-y-3">
         {sliders.map(({ key, label, min, max, step, unit }) => (
-          <label key={key} className="flex flex-col gap-1 text-xs text-slate-300">
+          <label key={key} className="flex flex-col gap-1 text-xs text-soft">
             <span className="flex justify-between">
               <span>{label}</span>
               <span className="font-mono text-white">
@@ -91,15 +92,18 @@ export default function SettingsPanel({ settings, onChange, onReset, withModel =
               step={step}
               value={settings[key]}
               onChange={(e) => onChange({ ...settings, [key]: Number(e.target.value) })}
-              className="accent-[#F2A541]"
+              className="accent-brand"
             />
           </label>
         ))}
       </div>
 
-      <button onClick={onReset} className="self-start text-xs text-slate-400 underline hover:text-white">
+      <button onClick={onReset} className="self-start text-xs text-muted underline hover:text-white">
         Remettre les valeurs par défaut
       </button>
     </div>
   );
 }
+
+// Mémorisé : les réglages ne se redessinent pas à chaque image de la caméra.
+export default memo(SettingsPanel);
