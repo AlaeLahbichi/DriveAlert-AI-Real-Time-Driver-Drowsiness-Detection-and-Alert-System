@@ -25,6 +25,8 @@ import {
 import LiveChart, { type ChartSample } from "./LiveChart";
 import SettingsPanel from "./SettingsPanel";
 import { drawLastCrops, predictV2, useV2Models, type V2Models } from "@/lib/v2Model";
+import { useIot, type Iot } from "@/lib/iot";
+import IotPanel from "./IotPanel";
 
 type Status = "loading" | "ready" | "running" | "error";
 
@@ -115,6 +117,13 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
     v2Ref.current = v2Models;
   }, [v2Models]);
   const alarmRef = useRef(new AlarmPlayer());
+  // Boîtier IoT : le niveau est publié en MQTT à chaque changement.
+  const iot = useIot(variant);
+  const iotRef = useRef<Iot | null>(null);
+  const sentLevelRef = useRef<Level>(0);
+  useEffect(() => {
+    iotRef.current = iot;
+  }, [iot]);
   const chartRef = useRef<ChartSample[]>([]);
   const rafRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
@@ -236,6 +245,10 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
       const engine = engineRef.current;
       const { snapshot: snap, events: evs } = engine.update(now / 1000, face);
       alarmRef.current.setLevel(snap.level);
+      if (snap.level !== sentLevelRef.current) {
+        sentLevelRef.current = snap.level;
+        iotRef.current?.publishLevel(snap.level, snap.reasons.join(" · "));
+      }
       drawOverlay(pts, snap.eyesClosed, snap.yawning);
 
       const buf = chartRef.current;
@@ -299,6 +312,10 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     alarmRef.current.setLevel(0);
+    if (sentLevelRef.current !== 0) {
+      sentLevelRef.current = 0;
+      iotRef.current?.publishLevel(0, "Détection arrêtée");
+    }
     drawOverlay(null, false, false);
     setSnapshot(null);
     setRunning(false);
@@ -624,6 +641,8 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
             </div>
           </Card>
 
+          <IotPanel iot={iot} />
+
           <Card title="Historique des événements" className="flex min-h-0 flex-col">
             {events.length === 0 ? (
               <p className="text-sm text-slate-500">Aucun événement pour le moment.</p>
@@ -666,8 +685,8 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
       </main>
 
       <footer className="px-6 pb-6 text-xs text-slate-500">
-        Tout est calculé dans le navigateur : aucune image n’est envoyée sur Internet. L’envoi vers l’ESP32 (MQTT) viendra
-        dans une prochaine version.
+        Tout est calculé dans le navigateur : aucune image n’est envoyée sur Internet. Seuls le niveau d’alerte, sa cause
+        et (si vous la partagez) votre position sont envoyés au boîtier ESP32 par MQTT.
       </footer>
     </div>
   );
