@@ -32,9 +32,10 @@ Le projet compare **deux versions** de la détection :
 6. [Base de données d'images](#base-de-données-dimages)
 7. [Entraînement du modèle V2](#entraînement-du-modèle-v2)
 8. [Résultats](#résultats)
-9. [Structure du projet](#structure-du-projet)
-10. [Technologies](#technologies)
-11. [Limites et suite du projet](#limites-et-suite-du-projet)
+9. [Boîtier IoT (ESP32 · MQTT)](#boîtier-iot-esp32--mqtt)
+10. [Structure du projet](#structure-du-projet)
+11. [Technologies](#technologies)
+12. [Limites et suite du projet](#limites-et-suite-du-projet)
 
 ---
 
@@ -53,6 +54,7 @@ Le projet compare **deux versions** de la détection :
 - **Tous les seuils sont réglables** dans l'interface.
 - **Outil de collecte et d'étiquetage** des images pour l'entraînement : capture manuelle ou automatique, galerie de vérification, découpage entraînement / validation / test.
 - **Modèle V2 fine-tuné**, qui tourne dans le navigateur avec TensorFlow.js, pour comparer directement avec la V1.
+- **Boîtier IoT ESP32** (simulé dans Wokwi), relié à la plateforme par **MQTT** : LED, buzzer, écran, vibration, feux de détresse, bouton « J'ai vu », rappel de pause, journal sur carte SD et **SOS WhatsApp** si le conducteur ne répond pas.
 
 ## Architecture
 
@@ -67,7 +69,9 @@ flowchart LR
     V2 --> ENG
     POSE --> ENG
     ENG --> UI[Interface :<br/>visuel + son + voix]
-    ENG -.-> ESP[ESP32 via MQTT<br/>à venir]
+    ENG <-->|MQTT · HiveMQ| ESP[Boîtier ESP32<br/>Wokwi]
+    ESP --> ACT[LED, buzzer, LCD,<br/>vibration, relais]
+    ESP -->|SOS| WA[WhatsApp<br/>Green-API]
 ```
 
 Le **moteur de décision** est le même pour les deux versions. Seule change la façon de décider « yeux fermés » et « bâillement ». La comparaison V1 / V2 est donc équitable.
@@ -262,6 +266,47 @@ Le modèle converti en TensorFlow.js donne **exactement les mêmes scores** que 
 
 > ⚠️ Ces scores sont optimistes : une seule personne, 3 sessions, et surtout des cas faciles. La vraie comparaison V1 / V2 doit se faire sur de **nouvelles sessions** : autre jour, autre lumière, lunettes.
 
+## Boîtier IoT (ESP32 · MQTT)
+
+La plateforme envoie le niveau d'alerte à un **ESP32** simulé dans **Wokwi** (extension VS Code), via le broker MQTT public `broker.hivemq.com`. Le boîtier réagit et renvoie la réponse du conducteur, son journal et son état.
+
+### Topics MQTT
+
+| Topic (`drivealert/pfa-alae-01/…`) | Sens | Contenu |
+|---|---|---|
+| `alerte` | plateforme → ESP32 | `{"niveau":3,"cause":"Yeux fermés 2.1 s","version":"v2","lat":…,"lon":…}` à chaque changement |
+| `heartbeat` | plateforme → ESP32 | même format, toutes les 2 s |
+| `ack` | ESP32 → plateforme | le conducteur a appuyé sur le bouton (alerte ou pause) |
+| `journal` | ESP32 → plateforme | chaque événement du boîtier |
+| `etat` | ESP32 → plateforme | `{"enLigne":true}` (retenu) ; `false` publié par le broker si l'ESP32 disparaît (LWT) |
+
+### Réactions du boîtier
+
+| Niveau | LED | Buzzer | Écran | Autres |
+|---|---|---|---|---|
+| 0 | verte | – | « Conduite normale » | – |
+| 1 | orange | 1 bip | « VIGILANCE » | – |
+| 2 | rouge clignotante | 1 bip / s | « !! ALERTE !! » | vibration |
+| 3 | rouge rapide | bips continus | « DANGER-ARRETEZ! » + décompte SOS | vibration, relais (feux de détresse) |
+
+- **Bouton « J'ai vu »** : coupe le son et la vibration, prévient la plateforme.
+- **SOS** : niveau 3 sans réponse pendant 10 s → message WhatsApp (Green-API) avec la cause, l'heure et la position (celle du navigateur si elle est partagée), puis rappel toutes les 2 min et message de fin.
+- **Rappel de pause** : après un temps de conduite (20 s en test, 2 h en réel), alerte orange de 10 s : bouton = pause acceptée, sinon annulée.
+- **Sécurité** : auto-test au démarrage, LED « Connexion », « Plateforme déconnectée » sans heartbeat depuis 5 s, reconnexion automatique.
+- **Journal** : chaque événement est écrit sur la carte microSD (`/journal.csv`) avec la date et l'heure réelles (NTP).
+
+### Lancer la simulation
+
+```bash
+uv tool install platformio                       # une seule fois
+cp iot/include/secrets.example.h iot/include/secrets.h   # puis le remplir (Green-API)
+cd iot && pio run                                 # compile le firmware
+```
+
+Dans VS Code : ouvrir `iot/diagram.json`, puis **« Wokwi: Start Simulator »**. Ouvrir ensuite la plateforme (onglet V1 ou V2) : la carte **« Boîtier IoT »** affiche l'état de l'ESP32, la réponse du conducteur et le journal.
+
+> `iot/include/secrets.h` (identifiants Green-API, numéro) est ignoré par git. Sans identifiants, le SOS est simulé (affiché dans le moniteur série).
+
 ## Structure du projet
 
 ```
@@ -281,19 +326,27 @@ Le modèle converti en TensorFlow.js donne **exactement les mêmes scores** que 
 │   │   ├── DataCollector.tsx      # interface de collecte et d'étiquetage
 │   │   ├── LiveChart.tsx          # courbes en temps réel
 │   │   ├── SettingsPanel.tsx      # réglage des seuils
+│   │   ├── IotPanel.tsx           # carte « Boîtier IoT » (état, réponse, journal)
 │   │   └── NavTabs.tsx            # les 3 onglets
 │   └── lib/
 │       ├── metrics.ts             # EAR, MAR, angles de la tête
 │       ├── engine.ts              # moteur de décision : niveaux 0 à 3, calibration, PERCLOS
 │       ├── alarm.ts               # son, voix, vibration
+│       ├── iot.ts                 # liaison MQTT avec le boîtier ESP32
 │       ├── useFaceLandmarker.ts   # chargement du modèle de Google
 │       ├── v2Model.ts             # chargement et exécution de notre modèle (TF.js)
 │       ├── crop.ts                # découpe des yeux et de la bouche
 │       ├── datasetClasses.ts      # classes de la base
 │       └── datasetStore.ts        # écriture des images et du CSV (serveur)
-└── training/
-    ├── train.py                   # fine-tuning MobileNetV2 + export TF.js
-    └── requirements.txt
+├── training/
+│   ├── train.py                   # fine-tuning MobileNetV2 + export TF.js
+│   └── requirements.txt
+└── iot/                           # boîtier ESP32 (PlatformIO + Wokwi)
+    ├── src/main.cpp               # firmware : alertes, MQTT, journal, SOS
+    ├── diagram.json               # montage Wokwi
+    ├── include/secrets.example.h  # modèle des identifiants
+    ├── platformio.ini
+    └── wokwi.toml
 ```
 
 ## Technologies
@@ -304,6 +357,7 @@ Le modèle converti en TensorFlow.js donne **exactement les mêmes scores** que 
 | Vision (V1) | Google MediaPipe Face Landmarker (`@mediapipe/tasks-vision`) |
 | Modèle V2 | TensorFlow / Keras 2.19, MobileNetV2 (ImageNet), TensorFlow.js 4 |
 | Alertes | Web Audio API, Speech Synthesis (voix en français), Vibration API |
+| IoT | ESP32 (Arduino, PlatformIO), Wokwi, MQTT (HiveMQ, mqtt.js, PubSubClient), Green-API (WhatsApp) |
 
 ## Limites et suite du projet
 
@@ -311,12 +365,15 @@ Le modèle converti en TensorFlow.js donne **exactement les mêmes scores** que 
 
 - Le modèle V2 est entraîné sur **une seule personne**. Il risque d'être moins bon sur un autre visage, alors que la V1 de Google fonctionne pour tout le monde.
 - La caméra doit voir le visage de face, avec assez de lumière.
+- Le broker MQTT public n'a pas de mot de passe : suffisant pour une démo, à remplacer par un broker privé (TLS + identifiants) en vrai.
+- Wokwi n'a pas de GPS : la position vient du navigateur, ou d'une position simulée.
 
 **Suite prévue :**
 
 - [ ] Enrichir la base : plus de sessions (nuit, lunettes, tête tournée) et d'autres personnes.
 - [ ] Comparer V1 et V2 sur les mêmes scénarios de test : alertes justes, fausses alertes, délai de réaction.
-- [ ] Envoyer le niveau d'alerte à un **ESP32** par **MQTT** pour déclencher un buzzer, une LED ou un vibreur (simulation dans Wokwi, puis matériel réel).
+- [x] Envoyer le niveau d'alerte à un **ESP32** par **MQTT** (simulation Wokwi) : buzzer, LED, écran, vibration, SOS WhatsApp.
+- [ ] Passer au matériel réel (ESP32, GPS NEO-6M, moteur vibrant) et mesurer le délai détection → buzzer.
 
 ---
 
