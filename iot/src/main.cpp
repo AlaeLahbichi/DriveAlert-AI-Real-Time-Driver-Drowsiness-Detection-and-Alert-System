@@ -22,7 +22,7 @@
 //
 // En plus : auto-test au démarrage, LED « Connexion », rappel de pause,
 // journal des alertes sur carte microSD (copie en mémoire si la carte est absente),
-// SOS WhatsApp (Green-API) si le conducteur ne répond pas 10 s à une alerte de niveau 3.
+// SOS WhatsApp (Green-API) si le conducteur ne répond pas 5 s à une alerte de niveau 3.
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -62,7 +62,7 @@ constexpr uint8_t SD_CS = 5;
 // ---- Réglages ----
 constexpr unsigned long DUREE_AVANT_PAUSE_MS = 20UL * 1000;  // TEST : 20 s (réel : 2UL * 60 * 60 * 1000 = 2 h)
 constexpr unsigned long DUREE_RAPPEL_PAUSE_MS = 10UL * 1000;  // le rappel dure 10 s : bouton = accepter, rien = annulé
-constexpr unsigned long DELAI_SOS_MS = 10UL * 1000;           // niveau 3 sans réponse pendant 10 s -> SOS
+constexpr unsigned long DELAI_SOS_MS = 5UL * 1000;            // niveau 3 sans réponse pendant 5 s -> SOS
 constexpr unsigned long RAPPEL_SOS_MS = 2UL * 60 * 1000;      // toujours sans réponse : rappel toutes les 2 min
 constexpr unsigned long NOUVEL_ESSAI_SOS_MS = 30UL * 1000;    // envoi raté : on réessaie après 30 s
 constexpr unsigned long DELAI_CONNEXION_MS = 5000;         // plus de signe de vie depuis 5 s = déconnecté
@@ -483,7 +483,7 @@ void majMqtt() {
 }
 
 // =====================================================================
-// SOS WhatsApp (Green-API) : niveau 3 sans réponse pendant 10 s
+// SOS WhatsApp (Green-API) : niveau 3 sans réponse pendant 5 s
 // =====================================================================
 // L'envoi HTTPS peut prendre plusieurs secondes : il tourne dans une tâche FreeRTOS séparée
 // (cœur 0) pour que le buzzer, les LED, le bouton et MQTT restent en temps réel.
@@ -573,7 +573,7 @@ void envoyerWhatsApp(const String& texte, bool avecPosition, TypeEnvoi type) {
 String messageSos(bool rappel) {
   String m = rappel ? "🔁 *RAPPEL – DriveAlert AI – URGENCE*\n" : "🚨 *DriveAlert AI – URGENCE*\n";
   m += "Le conducteur ne répond pas à une alerte de somnolence grave";
-  m += rappel ? " (toujours aucune réponse).\n" : " depuis 10 s.\n";
+  m += rappel ? " (toujours aucune réponse).\n" : " depuis " + String(DELAI_SOS_MS / 1000) + " s.\n";
   if (cause.length()) m += "Cause : " + cause + "\n";
   m += "Heure : " + horodatage() + "\n";
   m += String("📍 Position : https://maps.google.com/?q=") + positionLat + "," + positionLon + "\n";

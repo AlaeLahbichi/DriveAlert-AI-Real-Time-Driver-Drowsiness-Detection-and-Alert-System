@@ -307,7 +307,7 @@ La plateforme envoie le niveau d'alerte à un **ESP32** simulé dans **Wokwi** (
 | 3 | rouge rapide | bips continus | « DANGER-ARRETEZ! » + décompte SOS | vibration, relais (feux de détresse) |
 
 - **Bouton « J'ai vu »** : coupe le son et la vibration, prévient la plateforme.
-- **SOS** : niveau 3 sans réponse pendant 10 s → message WhatsApp (Green-API) avec la cause, l'heure et la position (celle du navigateur si elle est partagée), puis rappel toutes les 2 min et message de fin.
+- **SOS** : niveau 3 sans réponse pendant 5 s → message WhatsApp (Green-API) avec la cause, l'heure et la position (celle du navigateur si elle est partagée), puis rappel toutes les 2 min et message de fin.
 - **Rappel de pause** : après un temps de conduite (20 s en test, 2 h en réel), alerte orange de 10 s : bouton = pause acceptée, sinon annulée.
 - **Sécurité** : auto-test au démarrage, LED « Connexion », « Plateforme déconnectée » sans heartbeat depuis 5 s, reconnexion automatique.
 - **Journal** : chaque événement est écrit sur la carte microSD (`/journal.csv`) avec la date et l'heure réelles (NTP).
