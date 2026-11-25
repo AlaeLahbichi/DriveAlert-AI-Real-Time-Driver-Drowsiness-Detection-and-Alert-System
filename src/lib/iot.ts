@@ -1,7 +1,8 @@
 "use client";
 
 // Lien plateforme <-> boîtier ESP32 par MQTT (broker public HiveMQ, en WebSocket sécurisé).
-// La plateforme publie le niveau d'alerte à chaque changement, plus un heartbeat toutes les 2 s.
+// La plateforme publie le niveau d'alerte à chaque changement, plus un heartbeat toutes les 2 s,
+// et écoute le boîtier : appui sur le bouton (ack), journal des événements, état en ligne.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MqttClient } from "mqtt";
@@ -14,6 +15,11 @@ const HEARTBEAT_MS = 2000;
 
 export type BrokerStatus = "connexion" | "connecte" | "erreur";
 export type Position = { lat: number; lon: number; precision: number };
+/** État publié (retenu) par le boîtier ; enLigne:false est publié par le broker si l'ESP32 disparaît. */
+export type BoxState = { enLigne: boolean; ip?: string; sos?: "whatsapp" | "simulation" };
+export type BoxAck = { type: "alerte" | "pause"; niveau: number; temps: string; at: number };
+export type BoxLog = { id: number; temps: string; evenement: string; niveau: number; detail: string };
+const MAX_LOG = 30;
 
 export function useIot(version: "v1" | "v2") {
   const clientRef = useRef<MqttClient | null>(null);
@@ -24,6 +30,9 @@ export function useIot(version: "v1" | "v2") {
   const [sent, setSent] = useState<{ niveau: Level; at: number } | null>(null);
   const [position, setPosition] = useState<Position | null>(null);
   const [positionError, setPositionError] = useState<string | null>(null);
+  const [box, setBox] = useState<BoxState | null>(null);
+  const [lastAck, setLastAck] = useState<BoxAck | null>(null);
+  const [log, setLog] = useState<BoxLog[]>([]);
 
   /** Message envoyé au boîtier (alerte et heartbeat ont le même format). */
   const payload = useCallback(() => {
@@ -53,6 +62,25 @@ export function useIot(version: "v1" | "v2") {
         client.on("connect", () => {
           setBroker("connecte");
           setBrokerError(null);
+          client?.subscribe([IOT_PREFIX + "etat", IOT_PREFIX + "ack", IOT_PREFIX + "journal"]);
+        });
+        let nextId = 0;
+        client.on("message", (topic, raw) => {
+          if (raw.length === 0) {
+            if (topic === IOT_PREFIX + "etat") setBox(null); // état retenu effacé
+            return;
+          }
+          let data: Record<string, unknown>;
+          try {
+            data = JSON.parse(raw.toString());
+          } catch {
+            return;
+          }
+          const name = topic.slice(IOT_PREFIX.length);
+          if (name === "etat") setBox(data as BoxState);
+          else if (name === "ack") setLastAck({ ...(data as Omit<BoxAck, "at">), at: Date.now() });
+          else if (name === "journal")
+            setLog((prev) => [{ ...(data as Omit<BoxLog, "id">), id: nextId++ }, ...prev].slice(0, MAX_LOG));
         });
         client.on("reconnect", () => setBroker("connexion"));
         client.on("offline", () => setBroker("connexion"));
@@ -109,7 +137,7 @@ export function useIot(version: "v1" | "v2") {
     );
   }, []);
 
-  return { broker, brokerError, sent, position, positionError, publishLevel, sharePosition };
+  return { broker, brokerError, sent, position, positionError, box, lastAck, log, publishLevel, sharePosition };
 }
 
 export type Iot = ReturnType<typeof useIot>;
