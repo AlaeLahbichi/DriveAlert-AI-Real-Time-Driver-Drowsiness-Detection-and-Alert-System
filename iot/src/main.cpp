@@ -1,6 +1,13 @@
 // DriveAlert AI — boîtier d'alerte (ESP32, simulé dans Wokwi)
 //
-// Étape 1 : les messages arrivent par le moniteur série (à l'étape 2 : par MQTT).
+// Les messages de la plateforme arrivent par MQTT (broker public HiveMQ) :
+//   drivealert/pfa-alae-01/alerte     <- {"niveau":3,"cause":"Yeux fermes 2.1 s","lat":33.57,"lon":-7.58}
+//   drivealert/pfa-alae-01/heartbeat  <- même format, toutes les 2 s (signe de vie + niveau courant)
+//   drivealert/pfa-alae-01/ack        -> le conducteur a appuyé sur le bouton
+//   drivealert/pfa-alae-01/journal    -> chaque événement du journal
+//   drivealert/pfa-alae-01/etat       -> {"enLigne":true|false} (retenu ; « false » publié par le broker si le boîtier tombe)
+//
+// Secours : les mêmes commandes peuvent être tapées dans le moniteur série.
 //   0 / 1 / 2 / 3                      -> niveau d'alerte
 //   {"niveau":2,"cause":"Yeux fermes"} -> niveau + cause affichée sur l'écran
 //   hb                                 -> signe de vie de la plateforme (heartbeat)
@@ -20,6 +27,7 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <LiquidCrystal_I2C.h>
+#include <PubSubClient.h>
 #include <SD.h>
 #include <SPI.h>
 #include <WiFi.h>
@@ -59,6 +67,13 @@ constexpr unsigned long NOUVEL_ESSAI_SOS_MS = 30UL * 1000;    // envoi raté : o
 constexpr unsigned long DELAI_CONNEXION_MS = 5000;         // plus de signe de vie depuis 5 s = déconnecté
 const char* FICHIER_JOURNAL = "/journal.csv";
 
+// MQTT : broker public gratuit. Le préfixe contient un identifiant unique du boîtier
+// pour ne pas se mélanger avec les autres utilisateurs du broker.
+const char* MQTT_HOTE = "broker.hivemq.com";
+constexpr uint16_t MQTT_PORT = 1883;
+const char* PREFIXE = "drivealert/pfa-alae-01/";
+constexpr unsigned long DELAI_RECONNEXION_MQTT_MS = 3000;
+
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 SPIClass spiSD(HSPI);
 
@@ -84,6 +99,23 @@ bool sosEnvoye = false;           // un SOS est parti pour l'alerte en cours
 unsigned long dernierSos = 0;     // millis() du dernier SOS envoyé
 unsigned long prochainEssaiSos = 0;
 bool wifiConnecte = false;
+
+WiFiClient clientReseau;
+PubSubClient mqtt(clientReseau);
+bool mqttConnecte = false;
+
+// Position envoyée dans le SOS : simulée par défaut, remplacée par celle du navigateur si la plateforme la partage.
+String positionLat = POSITION_LAT, positionLon = POSITION_LON;
+
+String topic(const char* nom) { return String(PREFIXE) + nom; }
+
+/** Publie un document JSON sur drivealert/pfa-alae-01/<nom> (si MQTT est connecté). */
+void publier(const char* nom, JsonDocument& doc, bool retenu = false) {
+  if (!mqtt.connected()) return;
+  String json;
+  serializeJson(doc, json);
+  mqtt.publish(topic(nom).c_str(), json.c_str(), retenu);
+}
 
 /** Sans identifiants Green-API dans secrets.h, le SOS est simulé (affiché dans le moniteur série). */
 bool sosSimule() { return strlen(GREENAPI_URL) == 0 || strlen(GREENAPI_ID_INSTANCE) == 0 || strlen(GREENAPI_TOKEN) == 0; }
@@ -129,6 +161,13 @@ void journaliser(const char* evenement, int niv, String detail = "") {
     }
   }
   Serial.printf("[journal] %s\n", ligne.c_str());
+
+  JsonDocument doc;  // copie envoyée à la plateforme
+  doc["temps"] = horodatage();
+  doc["evenement"] = evenement;
+  doc["niveau"] = niv;
+  doc["detail"] = detail;
+  publier("journal", doc);
 }
 
 void creerEnTeteJournal() {
@@ -199,6 +238,10 @@ void majEcran() {
     afficher("Conduite normale", messageTemporaire);
     return;
   }
+  if (niveau == 0 && !jamaisConnecte && !connecte) {  // plus de heartbeat : on le signale au conducteur
+    afficher("Plateforme", "DECONNECTEE");
+    return;
+  }
   static const char* titres[] = {"Conduite normale", "VIGILANCE", "!! ALERTE !!", "DANGER-ARRETEZ!"};
   static const char* defauts[] = {"DriveAlert AI", "Pensez a 1 pause", "Reveillez-vous", "Arretez-vous"};
   String l2 = acquitte ? String("Alerte vue : OK")
@@ -231,6 +274,15 @@ void appliquerNiveau(int n, const String& c) {
   }
 }
 
+/** Message de la plateforme : {"niveau":N,"cause":"...","lat":..,"lon":..} (alerte ou heartbeat). */
+void traiterMessage(JsonDocument& doc) {
+  if (doc["lat"].is<float>() && doc["lon"].is<float>()) {
+    positionLat = String(doc["lat"].as<float>(), 5);
+    positionLon = String(doc["lon"].as<float>(), 5);
+  }
+  if (doc["niveau"].is<int>()) appliquerNiveau(doc["niveau"].as<int>(), String(doc["cause"] | ""));
+}
+
 void aide() {
   Serial.println("Commandes : 0 1 2 3 | {\"niveau\":N,\"cause\":\"...\"} | hb | journal | effacer | aide");
 }
@@ -248,7 +300,7 @@ void traiterLigne(String ligne) {
       Serial.println("JSON invalide");
       return;
     }
-    appliquerNiveau(doc["niveau"] | -1, String(doc["cause"] | ""));
+    traiterMessage(doc);
   } else if (ligne.length() == 1 && isDigit(ligne[0])) {
     appliquerNiveau(ligne[0] - '0', "");
   } else if (ligne == "journal") {
@@ -276,6 +328,15 @@ void lireSerie() {
 // =====================================================================
 // Bouton « J'ai vu » (anti-rebond 30 ms)
 // =====================================================================
+/** Prévient la plateforme que le conducteur a appuyé sur le bouton. */
+void publierAck(const char* type) {
+  JsonDocument doc;
+  doc["type"] = type;  // "alerte" ou "pause"
+  doc["niveau"] = niveau;
+  doc["temps"] = horodatage();
+  publier("ack", doc);
+}
+
 void appuiBouton() {
   if (pauseActive) {  // le conducteur accepte la pause
     pauseActive = false;
@@ -283,9 +344,11 @@ void appuiBouton() {
     messageTemporaire = "Bonne pause !";
     finMessage = millis() + 2000;
     journaliser("PAUSE_OK", niveau, "pause acceptee par le conducteur");
+    publierAck("pause");
   } else if (niveau > 0 && !acquitte) {
     acquitte = true;
     journaliser("ACK", niveau, "alerte vue par le conducteur");
+    publierAck("alerte");
   }
 }
 
@@ -356,6 +419,54 @@ void majWifi() {
 }
 
 // =====================================================================
+// MQTT : reçoit les alertes de la plateforme, envoie ack / journal / état
+// =====================================================================
+void recevoirMqtt(char* nomTopic, byte* contenu, unsigned int taille) {
+  String texte;  // copie : le tampon de PubSubClient est réutilisé par publish()
+  for (unsigned int i = 0; i < taille; i++) texte += (char)contenu[i];
+  signeDeVie();  // alerte ou heartbeat : la plateforme est là
+
+  JsonDocument doc;
+  if (deserializeJson(doc, texte)) {
+    Serial.printf("MQTT : JSON invalide sur %s\n", nomTopic);
+    return;
+  }
+  traiterMessage(doc);
+}
+
+void majMqtt() {
+  static unsigned long dernierEssai = 0;
+  if (mqtt.connected()) {
+    mqtt.loop();
+    return;
+  }
+  if (mqttConnecte) {
+    mqttConnecte = false;
+    journaliser("MQTT_PERDU", niveau, "connexion au broker perdue");
+  }
+  if (!wifiConnecte || millis() - dernierEssai < DELAI_RECONNEXION_MQTT_MS) return;
+  dernierEssai = millis();
+
+  String id = "drivealert-esp32-" + String((uint32_t)ESP.getEfuseMac(), HEX);
+  String topicEtat = topic("etat");
+  // « Testament » (LWT) : si le boîtier disparaît, le broker publie lui-même enLigne:false.
+  if (!mqtt.connect(id.c_str(), nullptr, nullptr, topicEtat.c_str(), 1, true, "{\"enLigne\":false}")) {
+    Serial.printf("MQTT : connexion impossible (code %d), nouvel essai dans 3 s\n", mqtt.state());
+    return;
+  }
+  mqttConnecte = true;
+  mqtt.subscribe(topic("alerte").c_str());
+  mqtt.subscribe(topic("heartbeat").c_str());
+
+  JsonDocument etat;
+  etat["enLigne"] = true;
+  etat["ip"] = WiFi.localIP().toString();
+  etat["sos"] = sosSimule() ? "simulation" : "whatsapp";
+  publier("etat", etat, true);
+  journaliser("MQTT_OK", niveau, MQTT_HOTE);
+}
+
+// =====================================================================
 // SOS WhatsApp (Green-API) : niveau 3 sans réponse pendant 10 s
 // =====================================================================
 /** Appelle une méthode Green-API (sendMessage, sendLocation...). Ne journalise jamais l'URL (elle contient le jeton). */
@@ -402,8 +513,8 @@ bool envoyerWhatsApp(const String& texte, bool avecPosition = false) {
 
   if (avecPosition) {  // carte WhatsApp cliquable (un échec ici n'annule pas le SOS déjà parti)
     JsonDocument position;
-    position["latitude"] = atof(POSITION_LAT);
-    position["longitude"] = atof(POSITION_LON);
+    position["latitude"] = positionLat.toFloat();
+    position["longitude"] = positionLon.toFloat();
     position["nameLocation"] = "Position du conducteur";
     position["address"] = "DriveAlert AI - SOS";
     appelGreenApi("sendLocation", position);
@@ -417,7 +528,7 @@ String messageSos(bool rappel) {
   m += rappel ? " (toujours aucune réponse).\n" : " depuis 10 s.\n";
   if (cause.length()) m += "Cause : " + cause + "\n";
   m += "Heure : " + horodatage() + "\n";
-  m += String("📍 Position : https://maps.google.com/?q=") + POSITION_LAT + "," + POSITION_LON + "\n";
+  m += String("📍 Position : https://maps.google.com/?q=") + positionLat + "," + positionLon + "\n";
   m += "Appelez-le. Sans réponse, appelez les secours : 15 (protection civile), 19 (police), "
        "177 (gendarmerie), 112.";
   return m;
@@ -556,6 +667,9 @@ void setup() {
   Serial.println(sdOk ? "Carte SD : OK (journal dans /journal.csv)" : "Carte SD absente : journal en memoire");
 
   journaliser("DEMARRAGE", 0, "boitier allume");
+  mqtt.setServer(MQTT_HOTE, MQTT_PORT);
+  mqtt.setCallback(recevoirMqtt);
+  mqtt.setBufferSize(1024);
   demarrerWifi();  // se connecte en arrière-plan pendant l'auto-test
   autoTest();
   Serial.println(!sosSimule() ? "SOS WhatsApp : Green-API configure"
@@ -571,6 +685,7 @@ void loop() {
   majPause();
   majConnexion();
   majWifi();
+  majMqtt();
   majSos();
   majSorties();
   majEcran();
