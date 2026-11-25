@@ -2,9 +2,9 @@
 //
 // Les messages de la plateforme arrivent par MQTT (broker public HiveMQ) :
 //   drivealert/pfa-alae-01/alerte     <- {"niveau":3,"cause":"Yeux fermes 2.1 s","lat":33.57,"lon":-7.58}
-//   drivealert/pfa-alae-01/heartbeat  <- même format, toutes les 2 s (signe de vie + niveau courant)
+//   drivealert/pfa-alae-01/heartbeat  <- même format, toutes les secondes (signe de vie + niveau courant)
 //   drivealert/pfa-alae-01/recu       -> accusé de réception immédiat de chaque alerte (mesure de latence)
-//   drivealert/pfa-alae-01/ack        -> le conducteur a appuyé sur le bouton
+//   drivealert/pfa-alae-01/ack        -> le conducteur a appuyé sur le bouton ({"type","niveau","seq"})
 //   drivealert/pfa-alae-01/journal    -> chaque événement du journal
 //   drivealert/pfa-alae-01/etat       -> {"enLigne":true|false} (retenu ; « false » publié par le broker si le boîtier tombe)
 //
@@ -17,8 +17,10 @@
 // Niveau 0 : LED verte, « Conduite normale »
 // Niveau 1 : LED orange, un bip court
 // Niveau 2 : LED rouge clignotante, bip chaque seconde, vibration
-// Niveau 3 : LED rouge rapide, bips continus, vibration, relais (feux de détresse)
-// Bouton   : « J'ai vu » -> coupe le son et la vibration, ou valide le rappel de pause.
+// Niveau 3 : LED rouge rapide, bips continus, vibration, relais (feux de détresse).
+//            Maintenu par la plateforme jusqu'à l'appui sur le bouton.
+// Bouton   : niveau 3 -> arrête l'alerte ici et sur la plateforme ;
+//            niveau 1-2 -> coupe le son et la vibration ; rappel de pause -> pause acceptée.
 //
 // En plus : auto-test au démarrage, LED « Connexion », rappel de pause,
 // journal des alertes sur carte microSD (copie en mémoire si la carte est absente),
@@ -66,6 +68,7 @@ constexpr unsigned long DELAI_SOS_MS = 5UL * 1000;            // niveau 3 sans r
 constexpr unsigned long RAPPEL_SOS_MS = 2UL * 60 * 1000;      // toujours sans réponse : rappel toutes les 2 min
 constexpr unsigned long NOUVEL_ESSAI_SOS_MS = 30UL * 1000;    // envoi raté : on réessaie après 30 s
 constexpr unsigned long DELAI_CONNEXION_MS = 5000;         // plus de signe de vie depuis 5 s = déconnecté
+constexpr unsigned long DELAI_ACK_MS = 3000;               // après un appui : ignore les niveaux 3 encore en route
 const char* FICHIER_JOURNAL = "/journal.csv";
 
 // MQTT : broker public gratuit. Le préfixe contient un identifiant unique du boîtier
@@ -83,6 +86,8 @@ int niveau = 0;
 String cause;
 bool acquitte = false;          // le conducteur a appuyé sur le bouton pendant l'alerte
 unsigned long debutNiveau = 0;  // millis() au dernier changement de niveau
+unsigned long ackSeq = 0;       // numéro du dernier appui (renvoyé par la plateforme dans ackSeq)
+unsigned long dernierAck = 0;   // millis() du dernier appui sur le bouton
 
 bool pauseActive = false;
 unsigned long debutConduite = 0;  // départ du compteur de conduite (remis à zéro après une pause)
@@ -122,6 +127,7 @@ void publier(const char* nom, JsonDocument& doc, bool retenu = false) {
 /** Sans identifiants Green-API dans secrets.h, le SOS est simulé (affiché dans le moniteur série). */
 void majSorties();  // définie plus bas
 void majEcran();
+void majSos();
 
 bool sosSimule() { return strlen(GREENAPI_URL) == 0 || strlen(GREENAPI_ID_INSTANCE) == 0 || strlen(GREENAPI_TOKEN) == 0; }
 
@@ -288,7 +294,12 @@ void traiterMessage(JsonDocument& doc) {
     positionLat = String(doc["lat"].as<float>(), 5);
     positionLon = String(doc["lon"].as<float>(), 5);
   }
-  if (doc["niveau"].is<int>()) appliquerNiveau(doc["niveau"].as<int>(), String(doc["cause"] | ""));
+  if (!doc["niveau"].is<int>()) return;
+  // Message parti avant que la plateforme ait reçu notre appui : il ne doit pas relancer l'alerte arrêtée.
+  bool perime = doc["ackSeq"].is<unsigned long>() && doc["ackSeq"].as<unsigned long>() < ackSeq &&
+                millis() - dernierAck < DELAI_ACK_MS;
+  if (perime) return;
+  appliquerNiveau(doc["niveau"].as<int>(), String(doc["cause"] | ""));
 }
 
 void aide() {
@@ -341,6 +352,7 @@ void publierAck(const char* type) {
   JsonDocument doc;
   doc["type"] = type;  // "alerte" ou "pause"
   doc["niveau"] = niveau;
+  doc["seq"] = ackSeq;
   doc["temps"] = horodatage();
   publier("ack", doc);
 }
@@ -355,8 +367,19 @@ void appuiBouton() {
     publierAck("pause");
   } else if (niveau > 0 && !acquitte) {
     acquitte = true;
-    journaliser("ACK", niveau, "alerte vue par le conducteur");
-    publierAck("alerte");
+    ackSeq++;
+    dernierAck = millis();
+    publierAck("alerte");  // d'abord la plateforme (latence minimale), ensuite le journal
+    if (niveau == 3) {     // danger : l'alerte s'arrête complètement, ici et sur la plateforme
+      int ancien = niveau;
+      majSos();  // prévient les proches que le conducteur a répondu (si un SOS est parti)
+      appliquerNiveau(0, "");
+      messageTemporaire = "Alerte arretee";
+      finMessage = millis() + 2000;
+      journaliser("ACK", ancien, "alerte arretee par le conducteur");
+    } else {
+      journaliser("ACK", niveau, "alerte vue par le conducteur");
+    }
   }
 }
 
@@ -439,15 +462,14 @@ void recevoirMqtt(char* nomTopic, byte* contenu, unsigned int taille) {
     Serial.printf("MQTT : JSON invalide sur %s\n", nomTopic);
     return;
   }
-  traiterMessage(doc);
-
-  // Accusé de réception immédiat : la plateforme mesure ainsi la latence aller-retour.
+  // Accusé de réception d'abord (avant LED, écran, carte SD) : la latence mesurée est celle du réseau.
   if (String(nomTopic).endsWith("/alerte") && doc["t"].is<long long>()) {
     JsonDocument recu;
     recu["t"] = doc["t"].as<long long>();
-    recu["niveau"] = niveau;
+    recu["niveau"] = doc["niveau"] | niveau;
     publier("recu", recu);
   }
+  traiterMessage(doc);
 }
 
 void majMqtt() {
@@ -471,6 +493,7 @@ void majMqtt() {
     return;
   }
   mqttConnecte = true;
+  clientReseau.setNoDelay(true);  // pas d'algorithme de Nagle : chaque petit message part tout de suite
   mqtt.subscribe(topic("alerte").c_str());
   mqtt.subscribe(topic("heartbeat").c_str());
 

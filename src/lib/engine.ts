@@ -82,6 +82,8 @@ export type EngineEvent = { id: number; t: number; kind: EventKind; message: str
 export type Snapshot = {
   level: Level;
   reasons: string[];
+  /** Niveau 3 maintenu jusqu'à l'appui sur le bouton (boîtier ou plateforme). */
+  latched: boolean;
   faceVisible: boolean;
   calibrating: boolean;
   calibrationProgress: number;
@@ -133,6 +135,10 @@ export class DrowsinessEngine {
   private nodTimes: number[] = [];
   private levelSeenAt: number[] = [-Infinity, -Infinity, -Infinity, -Infinity];
   private level: Level = 0;
+  // Danger maintenu : le niveau 3 reste actif jusqu'à ce que le conducteur réponde.
+  private latched = false;
+  private latchReason = "";
+  private ackFrom: string | null = null;
 
   private calibration: { start: number; samples: Baseline[] } | null = null;
   private nextEventId = 1;
@@ -143,6 +149,23 @@ export class DrowsinessEngine {
 
   startCalibration(t: number) {
     this.calibration = { start: t, samples: [] };
+  }
+
+  /** Le conducteur a répondu (bouton du boîtier ou de la plateforme) : fin de l'alerte en cours. */
+  acknowledge(from: string) {
+    if (!this.latched && this.level < 3) return;
+    this.latched = false;
+    this.ackFrom = from;
+    // On repart de zéro pour ne pas relancer aussitôt la même alerte.
+    this.levelSeenAt = [-Infinity, -Infinity, -Infinity, -Infinity];
+    this.closedSince = null;
+    this.closureReported = false;
+    this.headDownSince = null;
+    this.nodTimes = [];
+  }
+
+  isLatched() {
+    return this.latched;
   }
 
   reset() {
@@ -369,6 +392,20 @@ export class DrowsinessEngine {
       }
     }
 
+    // ---- Danger maintenu jusqu'à la réponse du conducteur -------------------
+    if (this.ackFrom !== null) {
+      events.push(this.event(t, "level", `Alerte arrêtée par le conducteur (${this.ackFrom})`, 0));
+      this.ackFrom = null;
+    }
+    if (level === 3 && !this.latched) {
+      this.latched = true;
+      this.latchReason = reasons.join(" · ");
+    }
+    if (this.latched) {
+      level = 3;
+      if (!reasons.length) reasons.push(`${this.latchReason} · en attente du bouton`);
+    }
+
     if (level !== this.level) {
       if (level > this.level) {
         events.push(this.event(t, "level", `Niveau ${level} · ${LEVELS[level].name} — ${reasons.join(", ")}`, level));
@@ -383,6 +420,7 @@ export class DrowsinessEngine {
       snapshot: {
         level,
         reasons,
+        latched: this.latched,
         faceVisible: face !== null,
         calibrating,
         calibrationProgress,

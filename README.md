@@ -292,7 +292,7 @@ La plateforme envoie le niveau d'alerte à un **ESP32** simulé dans **Wokwi** (
 | Topic (`drivealert/pfa-alae-01/…`) | Sens | Contenu |
 |---|---|---|
 | `alerte` | plateforme → ESP32 | `{"niveau":3,"cause":"Yeux fermés 2.1 s","version":"v2","lat":…,"lon":…}` à chaque changement |
-| `heartbeat` | plateforme → ESP32 | même format, toutes les 2 s |
+| `heartbeat` | plateforme → ESP32 | même format, toutes les secondes |
 | `ack` | ESP32 → plateforme | le conducteur a appuyé sur le bouton (alerte ou pause) |
 | `journal` | ESP32 → plateforme | chaque événement du boîtier |
 | `etat` | ESP32 → plateforme | `{"enLigne":true}` (retenu) ; `false` publié par le broker si l'ESP32 disparaît (LWT) |
@@ -306,7 +306,9 @@ La plateforme envoie le niveau d'alerte à un **ESP32** simulé dans **Wokwi** (
 | 2 | rouge clignotante | 1 bip / s | « !! ALERTE !! » | vibration |
 | 3 | rouge rapide | bips continus | « DANGER-ARRETEZ! » + décompte SOS | vibration, relais (feux de détresse) |
 
-- **Bouton « J'ai vu »** : coupe le son et la vibration, prévient la plateforme.
+- **Niveau 3 maintenu** : le danger reste actif (boîtier et plateforme) jusqu'à l'appui sur le bouton.
+- **Bouton « J'ai vu »** : au niveau 3, arrête l'alerte sur le boîtier **et** sur la plateforme (la plateforme a aussi son bouton « arrêter l'alerte ») ; aux niveaux 1-2, coupe le son et la vibration.
+- **Faible latence** : accusés de réception envoyés avant tout le reste, sans délai TCP (Nagle désactivé), heartbeat chaque seconde pour resynchroniser vite.
 - **SOS** : niveau 3 sans réponse pendant 5 s → message WhatsApp (Green-API) avec la cause, l'heure et la position (celle du navigateur si elle est partagée), puis rappel toutes les 2 min et message de fin.
 - **Rappel de pause** : après un temps de conduite (20 s en test, 2 h en réel), alerte orange de 10 s : bouton = pause acceptée, sinon annulée.
 - **Sécurité** : auto-test au démarrage, LED « Connexion », « Plateforme déconnectée » sans heartbeat depuis 5 s, reconnexion automatique.

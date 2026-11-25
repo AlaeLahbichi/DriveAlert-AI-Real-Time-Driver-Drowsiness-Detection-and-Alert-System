@@ -167,7 +167,9 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
   }, [v2Models]);
   const alarmRef = useRef(new AlarmPlayer());
   // Boîtier IoT : le niveau est publié en MQTT à chaque changement.
-  const iot = useIot(variant);
+  // Bouton du boîtier pendant un niveau 3 : l'alerte s'arrête aussi sur la plateforme.
+  const onAlertAck = useCallback(() => engineRef.current.acknowledge("bouton du boîtier"), []);
+  const iot = useIot(variant, onAlertAck);
   const iotRef = useRef<Iot | null>(null);
   const sentLevelRef = useRef<Level>(0);
   useEffect(() => {
@@ -411,6 +413,9 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
     setRunning(false);
   };
 
+  /** Bouton « J'ai vu » de la plateforme : même effet que le bouton du boîtier. */
+  const stopAlert = () => engineRef.current.acknowledge("plateforme");
+
   const calibrate = () => engineRef.current.startCalibration(performance.now() / 1000);
 
   const toggleMute = () => {
@@ -448,9 +453,22 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
       )}
       {running && level === 3 && (
         <div className="pointer-events-none fixed inset-x-0 top-16 z-50 flex justify-center">
-          <div className="alert-flash rounded-2xl bg-danger px-8 py-4 text-center text-white shadow-2xl">
-            <p className="text-3xl font-black tracking-wide">RÉVEILLEZ-VOUS !</p>
+          <div className="pointer-events-auto rounded-2xl bg-danger px-8 py-4 text-center text-white shadow-2xl">
+            <p className="alert-flash text-3xl font-black tracking-wide">RÉVEILLEZ-VOUS !</p>
             <p className="text-sm">Arrêtez-vous dès que possible et faites une pause.</p>
+            {snapshot?.latched && (
+              <>
+                <p className="mt-1 text-xs text-white/80">
+                  L’alerte continue jusqu’à l’appui sur le bouton du boîtier ou ici.
+                </p>
+                <button
+                  onClick={stopAlert}
+                  className="mt-3 rounded-lg bg-white px-5 py-2 text-sm font-bold text-danger shadow hover:bg-white/90"
+                >
+                  J’ai vu · arrêter l’alerte
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

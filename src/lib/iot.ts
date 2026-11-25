@@ -1,8 +1,9 @@
 "use client";
 
 // Lien plateforme <-> boîtier ESP32 par MQTT (broker public HiveMQ, en WebSocket sécurisé).
-// La plateforme publie le niveau d'alerte à chaque changement, plus un heartbeat toutes les 2 s,
+// La plateforme publie le niveau d'alerte à chaque changement, plus un heartbeat toutes les secondes,
 // et écoute le boîtier : appui sur le bouton (ack), journal des événements, état en ligne.
+// Bouton pendant un niveau 3 : la plateforme arrête l'alerte et le dit au boîtier (champ ackSeq).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MqttClient } from "mqtt";
@@ -12,13 +13,13 @@ import { appendAck, appendBox, appendLatency } from "./logStore";
 export const IOT_BROKER = "wss://broker.hivemq.com:8884/mqtt";
 /** Préfixe des topics : identique à PREFIXE dans iot/src/main.cpp. */
 export const IOT_PREFIX = "drivealert/pfa-alae-01/";
-const HEARTBEAT_MS = 2000;
+const HEARTBEAT_MS = 1000; // resynchronise vite le boîtier si un message QoS 0 est perdu
 
 export type BrokerStatus = "connexion" | "connecte" | "erreur";
 export type Position = { lat: number; lon: number; precision: number };
 /** État publié (retenu) par le boîtier ; enLigne:false est publié par le broker si l'ESP32 disparaît. */
 export type BoxState = { enLigne: boolean; ip?: string; sos?: "whatsapp" | "simulation" };
-export type BoxAck = { type: "alerte" | "pause"; niveau: number; temps: string; at: number };
+export type BoxAck = { type: "alerte" | "pause"; niveau: number; temps: string; seq?: number; at: number };
 export type BoxLog = { id: number; temps: string; evenement: string; niveau: number; detail: string };
 /** Latence aller-retour plateforme -> broker -> ESP32 -> broker -> plateforme (ms). */
 export type Latency = { last: number; avg: number; min: number; max: number; count: number };
@@ -45,7 +46,14 @@ export const BOX_EVENT_LABEL: Record<string, string> = {
   SOS_ECHEC: "Échec du SOS",
 };
 
-export function useIot(version: "v1" | "v2") {
+/** onAlertAck : appelé dès que le conducteur appuie sur le bouton pendant une alerte (sans attendre React). */
+export function useIot(version: "v1" | "v2", onAlertAck?: (niveau: number) => void) {
+  const onAlertAckRef = useRef(onAlertAck);
+  useEffect(() => {
+    onAlertAckRef.current = onAlertAck;
+  }, [onAlertAck]);
+  /** Dernier appui reçu : renvoyé au boîtier pour qu'il ignore les messages plus anciens. */
+  const ackSeqRef = useRef(0);
   const clientRef = useRef<MqttClient | null>(null);
   const alerteRef = useRef<{ niveau: Level; cause: string }>({ niveau: 0, cause: "" });
   const positionRef = useRef<Position | null>(null);
@@ -66,6 +74,7 @@ export function useIot(version: "v1" | "v2") {
     const p = positionRef.current;
     return JSON.stringify({
       ...alerteRef.current,
+      ackSeq: ackSeqRef.current,
       version,
       t: Date.now(),
       ...(p ? { lat: p.lat, lon: p.lon } : {}),
@@ -82,8 +91,10 @@ export function useIot(version: "v1" | "v2") {
         const connect = mod.connect ?? (mod as unknown as { default: typeof mod }).default.connect;
         client = connect(IOT_BROKER, {
           clientId: `drivealert-web-${Math.random().toString(16).slice(2, 10)}`,
-          reconnectPeriod: 3000,
+          reconnectPeriod: 2000,
           connectTimeout: 8000,
+          keepalive: 15,
+          queueQoSZero: false, // hors ligne : on n'envoie pas plus tard des niveaux périmés
         });
         clientRef.current = client;
         client.on("connect", () => {
@@ -107,6 +118,8 @@ export function useIot(version: "v1" | "v2") {
           if (name === "etat") setBox(data as BoxState);
           else if (name === "ack") {
             const ack = { ...(data as Omit<BoxAck, "at">), at: Date.now() };
+            if (typeof ack.seq === "number") ackSeqRef.current = ack.seq;
+            if (ack.type === "alerte") onAlertAckRef.current?.(ack.niveau); // arrêt immédiat de l'alerte
             setLastAck(ack);
             const since = alertSinceRef.current;
             appendAck({
