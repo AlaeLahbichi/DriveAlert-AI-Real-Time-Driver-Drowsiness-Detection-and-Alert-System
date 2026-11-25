@@ -4,9 +4,10 @@
 // La plateforme publie le niveau d'alerte à chaque changement, plus un heartbeat toutes les 2 s,
 // et écoute le boîtier : appui sur le bouton (ack), journal des événements, état en ligne.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MqttClient } from "mqtt";
 import type { Level } from "./engine";
+import { appendAck, appendBox, appendLatency } from "./logStore";
 
 export const IOT_BROKER = "wss://broker.hivemq.com:8884/mqtt";
 /** Préfixe des topics : identique à PREFIXE dans iot/src/main.cpp. */
@@ -23,10 +24,33 @@ export type BoxLog = { id: number; temps: string; evenement: string; niveau: num
 export type Latency = { last: number; avg: number; min: number; max: number; count: number };
 const MAX_LOG = 30;
 
+/** Libellés lisibles des événements du journal de l'ESP32 (iot/src/main.cpp). */
+export const BOX_EVENT_LABEL: Record<string, string> = {
+  DEMARRAGE: "Boîtier allumé",
+  AUTOTEST: "Auto-test",
+  WIFI_OK: "Wi-Fi connecté",
+  WIFI_PERDU: "Wi-Fi perdu",
+  MQTT_OK: "MQTT connecté",
+  MQTT_PERDU: "MQTT perdu",
+  CONNEXION: "Plateforme détectée",
+  DECONNEXION: "Plateforme perdue",
+  NIVEAU: "Niveau reçu",
+  ACK: "Alerte vue (bouton)",
+  PAUSE_RAPPEL: "Rappel de pause",
+  PAUSE_OK: "Pause acceptée",
+  PAUSE_ANNULEE: "Pause annulée",
+  SOS_ENVOYE: "SOS WhatsApp envoyé",
+  SOS_RAPPEL: "Rappel SOS envoyé",
+  SOS_FIN: "Fin du SOS",
+  SOS_ECHEC: "Échec du SOS",
+};
+
 export function useIot(version: "v1" | "v2") {
   const clientRef = useRef<MqttClient | null>(null);
   const alerteRef = useRef<{ niveau: Level; cause: string }>({ niveau: 0, cause: "" });
   const positionRef = useRef<Position | null>(null);
+  /** Moment où l'alerte en cours a commencé (pour le temps de réaction du conducteur). */
+  const alertSinceRef = useRef<number | null>(null);
   const [broker, setBroker] = useState<BrokerStatus>("connexion");
   const [brokerError, setBrokerError] = useState<string | null>(null);
   const [sent, setSent] = useState<{ niveau: Level; at: number } | null>(null);
@@ -81,9 +105,20 @@ export function useIot(version: "v1" | "v2") {
           }
           const name = topic.slice(IOT_PREFIX.length);
           if (name === "etat") setBox(data as BoxState);
-          else if (name === "ack") setLastAck({ ...(data as Omit<BoxAck, "at">), at: Date.now() });
+          else if (name === "ack") {
+            const ack = { ...(data as Omit<BoxAck, "at">), at: Date.now() };
+            setLastAck(ack);
+            const since = alertSinceRef.current;
+            appendAck({
+              at: ack.at,
+              type: ack.type,
+              niveau: ack.niveau,
+              reactionMs: ack.type === "alerte" && since ? ack.at - since : null,
+            });
+          }
           else if (name === "recu" && typeof data.t === "number") {
             const ms = Date.now() - data.t;
+            appendLatency({ at: Date.now(), ms });
             setLatency((l) =>
               l
                 ? {
@@ -95,8 +130,11 @@ export function useIot(version: "v1" | "v2") {
                   }
                 : { last: ms, avg: ms, min: ms, max: ms, count: 1 },
             );
-          } else if (name === "journal")
-            setLog((prev) => [{ ...(data as Omit<BoxLog, "id">), id: nextId++ }, ...prev].slice(0, MAX_LOG));
+          } else if (name === "journal") {
+            const entry = data as Omit<BoxLog, "id">;
+            setLog((prev) => [{ ...entry, id: nextId++ }, ...prev].slice(0, MAX_LOG));
+            appendBox({ ...entry, at: Date.now() });
+          }
         });
         client.on("reconnect", () => setBroker("connexion"));
         client.on("offline", () => setBroker("connexion"));
@@ -132,6 +170,8 @@ export function useIot(version: "v1" | "v2") {
   /** À appeler quand le niveau change : prévient le boîtier tout de suite. */
   const publishLevel = useCallback(
     (niveau: Level, cause: string) => {
+      if (niveau === 0) alertSinceRef.current = null;
+      else if (alerteRef.current.niveau === 0) alertSinceRef.current = Date.now();
       alerteRef.current = { niveau, cause };
       const c = clientRef.current;
       if (!c?.connected) return;
@@ -159,7 +199,11 @@ export function useIot(version: "v1" | "v2") {
     );
   }, []);
 
-  return { broker, brokerError, sent, position, positionError, box, lastAck, log, latency, ping, publishLevel, sharePosition };
+  // Objet stable tant que rien ne change : la carte « Boîtier IoT » ne se redessine pas à chaque image.
+  return useMemo(
+    () => ({ broker, brokerError, sent, position, positionError, box, lastAck, log, latency, ping, publishLevel, sharePosition }),
+    [broker, brokerError, sent, position, positionError, box, lastAck, log, latency, ping, publishLevel, sharePosition],
+  );
 }
 
 export type Iot = ReturnType<typeof useIot>;
