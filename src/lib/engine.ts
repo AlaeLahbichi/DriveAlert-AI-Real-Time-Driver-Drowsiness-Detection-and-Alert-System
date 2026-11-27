@@ -12,6 +12,19 @@ export const LEVELS: { name: string; hint: string }[] = [
   { name: "Danger", hint: "Endormissement : arrêtez-vous" },
 ];
 
+/** Score de fatigue 0–100 : quatre zones lisibles par le conducteur. */
+export const FATIGUE_BANDS = [
+  { min: 0, label: "Éveillé", level: 0 as Level },
+  { min: 30, label: "Légère fatigue", level: 1 as Level },
+  { min: 55, label: "Fatigue marquée", level: 2 as Level },
+  { min: 80, label: "Danger", level: 3 as Level },
+];
+export function fatigueBand(score: number) {
+  let b = FATIGUE_BANDS[0];
+  for (const x of FATIGUE_BANDS) if (score >= x.min) b = x;
+  return b;
+}
+
 export type EyeSource = "ear" | "blendshape" | "model";
 export type MouthSource = "mar" | "model";
 
@@ -84,6 +97,8 @@ export type Snapshot = {
   reasons: string[];
   /** Niveau 3 maintenu jusqu'à l'appui sur le bouton (boîtier ou plateforme). */
   latched: boolean;
+  /** Score de fatigue 0–100 (lissé : monte vite, redescend lentement). */
+  fatigue: number;
   faceVisible: boolean;
   calibrating: boolean;
   calibrationProgress: number;
@@ -111,7 +126,8 @@ export type Snapshot = {
 const PERCLOS_WINDOW_S = 60;
 const YAWN_WINDOW_S = 300;
 const NOD_WINDOW_S = 60;
-const CALIBRATION_S = 5;
+const CALIBRATION_S = 5; // secondes de visage visible
+const CALIBRATION_TIMEOUT_S = 30; // abandon si le visage n'apparaît pas
 
 export class DrowsinessEngine {
   settings: Settings = { ...DEFAULT_SETTINGS };
@@ -140,7 +156,9 @@ export class DrowsinessEngine {
   private latchReason = "";
   private ackFrom: string | null = null;
 
-  private calibration: { start: number; samples: Baseline[] } | null = null;
+  /** seen : temps passé avec le visage visible (la calibration attend que le conducteur soit en place). */
+  private calibration: { start: number; seen: number; samples: Baseline[] } | null = null;
+  private fatigue = 0;
   private nextEventId = 1;
 
   getBaseline() {
@@ -148,7 +166,7 @@ export class DrowsinessEngine {
   }
 
   startCalibration(t: number) {
-    this.calibration = { start: t, samples: [] };
+    this.calibration = { start: t, seen: 0, samples: [] };
   }
 
   /** Le conducteur a répondu (bouton du boîtier ou de la plateforme) : fin de l'alerte en cours. */
@@ -194,7 +212,9 @@ export class DrowsinessEngine {
     // ---- Calibration -------------------------------------------------------
     let calibrationProgress = 0;
     if (this.calibration) {
-      const elapsed = t - this.calibration.start;
+      if (face?.pose) this.calibration.seen += dt;
+      const elapsed = this.calibration.seen;
+      const timedOut = t - this.calibration.start >= CALIBRATION_TIMEOUT_S;
       calibrationProgress = Math.min(elapsed / CALIBRATION_S, 1);
       if (face?.pose) {
         this.calibration.samples.push({
@@ -205,7 +225,7 @@ export class DrowsinessEngine {
           roll: face.pose.roll,
         });
       }
-      if (elapsed >= CALIBRATION_S) {
+      if (elapsed >= CALIBRATION_S || timedOut) {
         const smp = this.calibration.samples;
         this.calibration = null;
         if (smp.length >= 20) {
@@ -392,6 +412,22 @@ export class DrowsinessEngine {
       }
     }
 
+    // ---- Score de fatigue 0–100 ---------------------------------------------
+    // Chaque signe pèse selon sa gravité ; le niveau d'alerte impose un plancher.
+    if (!calibrating) {
+      const c = (x: number) => Math.max(0, Math.min(1, x));
+      const instant =
+        30 * c(closedFor / s.closedDangerS) +
+        30 * c(perclos / s.perclosAlert) +
+        15 * c(this.yawnTimes.length / 3) +
+        15 * Math.max(c(this.nodTimes.length / 3), c(headDownFor / s.headDangerS)) +
+        10 * (totalTime >= 20 ? c((blinksPerMin - 20) / 15) : 0);
+      const floor = this.latched || level === 3 ? 85 : level === 2 ? 60 : level === 1 ? 35 : 0;
+      const target = Math.min(100, Math.max(instant, floor));
+      const tau = target > this.fatigue ? 0.4 : 20; // monte en ~1 s, redescend en ~1 min
+      this.fatigue += (target - this.fatigue) * (1 - Math.exp(-dt / tau));
+    }
+
     // ---- Danger maintenu jusqu'à la réponse du conducteur -------------------
     if (this.ackFrom !== null) {
       events.push(this.event(t, "level", `Alerte arrêtée par le conducteur (${this.ackFrom})`, 0));
@@ -421,6 +457,7 @@ export class DrowsinessEngine {
         level,
         reasons,
         latched: this.latched,
+        fatigue: Math.round(this.latched ? Math.max(this.fatigue, 85) : this.fatigue),
         faceVisible: face !== null,
         calibrating,
         calibrationProgress,

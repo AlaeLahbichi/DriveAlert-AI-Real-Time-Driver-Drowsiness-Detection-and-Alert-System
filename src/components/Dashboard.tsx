@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { LEVELS, type EventKind } from "@/lib/engine";
 import { BOX_EVENT_LABEL } from "@/lib/iot";
 import { clearLogs, logsToCsv, useLogs, type Logs } from "@/lib/logStore";
+import { downloadSessionReport } from "@/lib/report";
 import { C, LEVEL_COLORS } from "@/lib/theme";
 import { Columns, Empty, HBars, LevelTimeline, LineChart, StackBar100 } from "./charts";
 
@@ -107,6 +108,7 @@ export default function Dashboard() {
   const [version, setVersion] = useState<Version>("toutes");
   const [source, setSource] = useState<Source>("tout");
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [reportBusy, setReportBusy] = useState(false);
 
   const logs = useMemo(() => filterLogs(all, period, version), [all, period, version]);
 
@@ -305,6 +307,29 @@ export default function Dashboard() {
                     colors={LEVEL_COLORS}
                     names={LEVELS.map((l) => l.name)}
                   />
+                  <p className="mb-1 mt-4 text-xs font-semibold text-soft">Score de fatigue (0–100)</p>
+                  <LineChart
+                    points={selected.fatigue ?? []}
+                    color={C.brand}
+                    max={100}
+                    height={130}
+                    refLine={{ v: 55, label: "fatigue marquée" }}
+                    emptyText="Score non enregistré pour cette session (enregistrée avant l’ajout du score)."
+                  />
+                  <button
+                    onClick={async () => {
+                      setReportBusy(true);
+                      try {
+                        await downloadSessionReport(selected, all);
+                      } finally {
+                        setReportBusy(false);
+                      }
+                    }}
+                    disabled={reportBusy}
+                    className="mt-3 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-hi disabled:opacity-40"
+                  >
+                    {reportBusy ? "Création du PDF…" : "⬇ Rapport PDF de cette session"}
+                  </button>
                 </>
               ) : (
                 <Empty>Aucune session sur cette période.</Empty>

@@ -306,6 +306,10 @@ La plateforme envoie le niveau d'alerte à un **ESP32** simulé dans **Wokwi** (
 | 2 | rouge clignotante | 1 bip / s | « !! ALERTE !! » | vibration |
 | 3 | rouge rapide | bips continus | « DANGER-ARRETEZ! » + décompte SOS | vibration, relais (feux de détresse) |
 
+- **Calibration automatique** : au démarrage, elle attend que le visage soit visible puis mesure 5 s de valeurs normales (bouton « Recalibrer » si besoin).
+- **Score de fatigue 0-100** : fermeture des yeux en cours (30 pts), PERCLOS (30), bâillements récents (15), hochements et tête basse (15), clignements trop fréquents (10) ; le niveau d'alerte impose un minimum. Il monte vite et redescend lentement. Affiché en jauge, enregistré toutes les 2 s et tracé dans le tableau de bord.
+- **Aires de repos au niveau 3** : les 3 aires de repos, aires de services ou stations les plus proches (OpenStreetMap / Overpass, 3 serveurs interrogés en parallèle), avec itinéraire Google Maps. Recherche lancée dès le démarrage pour être prête au moment de l'alerte ; seule la position partagée est envoyée.
+- **Rapport PDF de trajet** : bouton après l'arrêt de la caméra et dans le tableau de bord. 4 pages A4 vectorielles : verdict de risque, 8 KPI, répartition par niveau, fiche du trajet, courbe de fatigue + bande des niveaux, signes de fatigue expliqués, moments à risque, boîtier et réactions, recommandations, glossaire.
 - **Niveau 3 maintenu** : le danger reste actif (boîtier et plateforme) jusqu'à l'appui sur le bouton.
 - **Bouton « J'ai vu »** : au niveau 3, arrête l'alerte sur le boîtier **et** sur la plateforme (la plateforme a aussi son bouton « arrêter l'alerte ») ; aux niveaux 1-2, coupe le son et la vibration.
 - **Faible latence** : accusés de réception envoyés avant tout le reste, sans délai TCP (Nagle désactivé), heartbeat chaque seconde pour resynchroniser vite.

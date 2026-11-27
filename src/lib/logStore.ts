@@ -16,6 +16,8 @@ export type SessionLog = {
   levelMs: [number, number, number, number]; // temps passé à chaque niveau
   timeline: { at: number; level: Level }[]; // changements de niveau
   events: SessionEvent[];
+  /** Score de fatigue toutes les 2 s (absent des sessions enregistrées avant cette version). */
+  fatigue?: { at: number; v: number }[];
 };
 export type BoxEntry = { at: number; temps: string; evenement: string; niveau: number; detail: string };
 export type AckEntry = { at: number; type: "alerte" | "pause"; niveau: number; reactionMs: number | null };
@@ -24,7 +26,7 @@ export type Logs = { sessions: SessionLog[]; box: BoxEntry[]; acks: AckEntry[]; 
 
 const KEY = "drivealert.logs.v1";
 const CHANGE = "drivealert-logs";
-const MAX = { sessions: 60, events: 400, box: 600, acks: 300, latency: 300 };
+const MAX = { sessions: 60, events: 400, fatigue: 1800, box: 600, acks: 300, latency: 300 };
 const EMPTY: Logs = { sessions: [], box: [], acks: [], latency: [] };
 
 let cache: Logs | null = null;
@@ -57,7 +59,13 @@ const keep = <T,>(list: T[], max: number) => (list.length > max ? list.slice(lis
 export function saveSession(s: SessionLog) {
   const logs = read();
   // Copie : la session en cours continue d'être modifiée par la boucle de détection.
-  const session: SessionLog = { ...s, levelMs: [...s.levelMs], timeline: [...s.timeline], events: keep([...s.events], MAX.events) };
+  const session: SessionLog = {
+    ...s,
+    levelMs: [...s.levelMs],
+    timeline: [...s.timeline],
+    events: keep([...s.events], MAX.events),
+    fatigue: s.fatigue ? keep([...s.fatigue], MAX.fatigue) : undefined,
+  };
   const others = logs.sessions.filter((x) => x.id !== s.id);
   write({ ...logs, sessions: keep([...others, session], MAX.sessions) });
 }
@@ -93,6 +101,11 @@ function subscribe(cb: () => void) {
     window.removeEventListener(CHANGE, cb);
     window.removeEventListener("storage", onStorage);
   };
+}
+
+/** Lecture ponctuelle (sans abonnement), par exemple pour générer un rapport. */
+export function getLogs(): Logs {
+  return read();
 }
 
 /** Les logs, mis à jour en direct (même onglet ou autre onglet). */

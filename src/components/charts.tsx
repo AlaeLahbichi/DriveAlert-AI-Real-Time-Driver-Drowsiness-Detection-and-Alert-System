@@ -220,22 +220,27 @@ export function LineChart({
   unit = "",
   height = 170,
   refLine,
+  max: fixedMax,
+  emptyText = "Pas assez de mesures (bouton « Tester » dans l’onglet Boîtier IoT).",
 }: {
   points: { at: number; v: number }[];
   color?: string;
   unit?: string;
   height?: number;
   refLine?: { v: number; label: string };
+  /** Échelle fixe (ex. 100 pour un score) ; sinon calculée. */
+  max?: number;
+  emptyText?: string;
 }) {
   const { ref, w } = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
-  if (points.length < 2) return <Empty>Pas assez de mesures (bouton « Tester » dans l’onglet Boîtier IoT).</Empty>;
+  if (points.length < 2) return <Empty>{emptyText}</Empty>;
   const padL = 40;
   const padB = 20;
   const padT = 10;
   const pw = Math.max(10, w - padL - 8);
   const ph = height - padB - padT;
-  const max = niceMax(Math.max(...points.map((p) => p.v)) * 1.1);
+  const max = fixedMax ?? niceMax(Math.max(...points.map((p) => p.v)) * 1.1);
   const x = (i: number) => padL + (i / (points.length - 1)) * pw;
   const y = (v: number) => padT + ph - (v / max) * ph;
   const path = points.map((p, i) => `${i ? "L" : "M"}${x(i)},${y(p.v)}`).join("");

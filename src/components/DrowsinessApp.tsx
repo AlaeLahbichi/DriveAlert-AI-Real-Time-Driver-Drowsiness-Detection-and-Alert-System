@@ -2,16 +2,14 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useFaceLandmarker } from "@/lib/useFaceLandmarker";
-import {
-  DEFAULT_SETTINGS,
+import { DEFAULT_SETTINGS,
   DrowsinessEngine,
   LEVELS,
   type EngineEvent,
   type FaceMeasures,
   type Level,
   type Settings,
-  type Snapshot,
-} from "@/lib/engine";
+  type Snapshot, FATIGUE_BANDS, fatigueBand } from "@/lib/engine";
 import { AlarmPlayer } from "@/lib/alarm";
 import {
   LEFT_EYE,
@@ -28,7 +26,9 @@ import { drawLastCrops, predictV2, useV2Models, type V2Models } from "@/lib/v2Mo
 import { useIot, type Iot } from "@/lib/iot";
 import IotPanel from "./IotPanel";
 import { C, LEVEL_COLORS } from "@/lib/theme";
-import { saveSession, type SessionLog } from "@/lib/logStore";
+import { getLogs, saveSession, type SessionLog } from "@/lib/logStore";
+import { directionsUrl, REST_KIND_LABEL, searchUrl, useRestAreas, type RestState } from "@/lib/restAreas";
+import { downloadSessionReport } from "@/lib/report";
 import { openCamera } from "@/lib/camera";
 
 type Status = "loading" | "ready" | "running" | "error";
@@ -182,6 +182,8 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
   const streamRef = useRef<MediaStream | null>(null);
 
   const [running, setRunning] = useState(false);
+  // Aires de repos : cherchées dès que la position est connue, affichées au niveau 3.
+  const rest = useRestAreas(iot.position, running);
   const [cameraError, setError] = useState<string | null>(null);
   const v2Loading = isV2 && !v2Models && !v2Error;
   const status: Status = running
@@ -203,12 +205,15 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
   const [showMesh, setShowMesh] = useState(true);
   const showMeshRef = useRef(true);
 
+  const [lastSession, setLastSession] = useState<SessionLog | null>(null);
+  const [reportBusy, setReportBusy] = useState(false);
   const endSession = useCallback(() => {
     const s = sessionRef.current;
-    if (!s) return;
+    if (!s) return null;
     s.end = Date.now();
     saveSession(s);
     sessionRef.current = null;
+    return s;
   }, []);
 
   // Nettoyage quand on quitte la page (caméra, boucle, son, session).
@@ -326,6 +331,9 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
         if (levelChanged) sess.timeline.push({ at: wall, level: snap.level });
         for (const e of evs) sess.events.push({ at: wall, kind: e.kind, level: e.level, message: e.message });
         sess.end = wall;
+        const fat = sess.fatigue;
+        if (fat && !snap.calibrating && (!fat.length || wall - fat[fat.length - 1].at >= 2000))
+          fat.push({ at: wall, v: snap.fatigue });
         if (wall - lastSave > 3000) {
           lastSave = wall;
           saveSession(sess);
@@ -385,14 +393,17 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
         levelMs: [0, 0, 0, 0],
         timeline: [{ at: t0, level: 0 }],
         events: [],
+        fatigue: [],
       };
       setSessionStart(performance.now() / 1000);
       setEvents([]);
       setError(null);
       setRunning(true);
       loop();
-      // Calibration automatique au démarrage
+      // Calibration automatique au démarrage (elle attend que le visage soit visible)
       engineRef.current.startCalibration(performance.now() / 1000);
+      // Position : pour le SOS du boîtier et les aires de repos proches
+      if (!iotRef.current?.position) iotRef.current?.sharePosition();
     } catch (e) {
       setError(`Caméra inaccessible : ${(e as Error).message}`);
     }
@@ -407,7 +418,8 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
       sentLevelRef.current = 0;
       iotRef.current?.publishLevel(0, "Détection arrêtée");
     }
-    endSession();
+    const ended = endSession();
+    if (ended && ended.end - ended.start > 5000) setLastSession(ended);
     drawOverlay(null, false, false);
     setSnapshot(null);
     setRunning(false);
@@ -415,6 +427,17 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
 
   /** Bouton « J'ai vu » de la plateforme : même effet que le bouton du boîtier. */
   const stopAlert = () => engineRef.current.acknowledge("plateforme");
+
+  const downloadReport = async () => {
+    if (!lastSession) return;
+    setReportBusy(true);
+    try {
+      const logs = getLogs();
+      await downloadSessionReport(logs.sessions.find((x) => x.id === lastSession.id) ?? lastSession, logs);
+    } finally {
+      setReportBusy(false);
+    }
+  };
 
   const calibrate = () => engineRef.current.startCalibration(performance.now() / 1000);
 
@@ -469,6 +492,7 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
                 </button>
               </>
             )}
+            <RestAreas position={iot.position} rest={rest} onShare={iot.sharePosition} />
           </div>
         </div>
       )}
@@ -504,6 +528,16 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
             />
             Boîtier {iot.box?.enLigne ? "en ligne" : iot.box ? "hors ligne" : "jamais vu"}
           </span>
+          {!running && lastSession && (
+            <button
+              onClick={downloadReport}
+              disabled={reportBusy}
+              className="rounded-lg border border-line bg-surface px-4 py-2 text-sm font-semibold hover:bg-raised disabled:opacity-40"
+              title="Rapport PDF détaillé du dernier trajet"
+            >
+              {reportBusy ? "Création du PDF…" : "⬇ Rapport PDF du trajet"}
+            </button>
+          )}
           {!running ? (
             <button
               onClick={start}
@@ -519,7 +553,7 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
                 disabled={snapshot?.calibrating}
                 className="rounded-lg border border-line bg-surface px-4 py-2 text-sm font-semibold hover:bg-raised disabled:opacity-40"
               >
-                ◎ Calibrer
+                ◎ Recalibrer
               </button>
               <button
                 onClick={stop}
@@ -557,7 +591,7 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
                   <ol className="max-w-md space-y-2 text-left text-sm">
                     {[
                       "Cliquez sur « Démarrer la caméra » et autorisez l’accès.",
-                      "Pendant 5 s, regardez l’écran, yeux ouverts, bouche fermée : c’est la calibration.",
+                      "Calibration automatique : regardez l’écran 5 s, yeux ouverts, bouche fermée (elle attend votre visage).",
                       "Testez : clignez, fermez les yeux 1 s puis 2 s, bâillez, baissez la tête.",
                     ].map((s, i) => (
                       <li key={i} className="flex gap-3">
@@ -573,7 +607,11 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
 
               {running && snapshot?.calibrating && (
                 <div className="absolute inset-x-0 bottom-0 bg-black/70 p-4">
-                  <p className="mb-2 text-sm">Calibration : regardez droit devant, yeux ouverts, bouche fermée…</p>
+                  <p className="mb-2 text-sm">
+                    {snapshot.faceVisible
+                      ? "Calibration automatique : regardez droit devant, yeux ouverts, bouche fermée…"
+                      : "Calibration : placez votre visage face à la caméra pour commencer…"}
+                  </p>
                   <div className="h-2 rounded-full bg-white/10">
                     <div
                       className="h-2 rounded-full bg-brand-hi"
@@ -756,7 +794,8 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
                 )}
               </div>
             </div>
-            <div className="mt-4 grid grid-cols-4 gap-1">
+            <FatigueGauge score={running && snapshot && !snapshot.calibrating ? snapshot.fatigue : null} />
+            <div className="mt-3 grid grid-cols-4 gap-1">
               {([0, 1, 2, 3] as Level[]).map((l) => {
                 const on = running && l === level;
                 return (
@@ -901,6 +940,108 @@ export default function DrowsinessApp({ variant = "v1" }: { variant?: Variant })
         et (si vous la partagez) votre position sont envoyés au boîtier ESP32 par MQTT. L’historique des sessions est gardé
         dans ce navigateur pour le tableau de bord.
       </footer>
+    </div>
+  );
+}
+
+/** Jauge du score de fatigue 0–100, découpée en 4 zones. */
+function FatigueGauge({ score }: { score: number | null }) {
+  const band = score !== null ? fatigueBand(score) : null;
+  return (
+    <div className="mt-4">
+      <div className="mb-1 flex items-baseline justify-between text-xs">
+        <span className="font-semibold text-soft">Score de fatigue</span>
+        <span className="text-muted">
+          {band ? (
+            <>
+              <b className="font-mono text-base text-ink tabular-nums">{score}</b>/100 ·{" "}
+              <span style={{ color: LEVEL_COLORS[band.level] }}>{band.label}</span>
+            </>
+          ) : (
+            "–"
+          )}
+        </span>
+      </div>
+      <div className="relative h-2.5 overflow-hidden rounded-full bg-raised">
+        <div className="absolute inset-0 flex opacity-25">
+          {FATIGUE_BANDS.map((b, i) => (
+            <div
+              key={b.min}
+              style={{ width: `${(FATIGUE_BANDS[i + 1]?.min ?? 100) - b.min}%`, background: LEVEL_COLORS[b.level] }}
+            />
+          ))}
+        </div>
+        {band && score !== null && (
+          <div
+            className="absolute inset-y-0 left-0 rounded-full transition-[width] duration-300"
+            style={{ width: `${Math.max(score, 2)}%`, background: LEVEL_COLORS[band.level] }}
+          />
+        )}
+      </div>
+      <div className="relative mt-1 h-3 text-[10px] text-faint">
+        <span className="absolute left-0">0 · éveillé</span>
+        <span className="absolute left-[30%] -translate-x-1/2">30</span>
+        <span className="absolute left-[55%] -translate-x-1/2">55</span>
+        <span className="absolute right-0">80 · danger</span>
+      </div>
+    </div>
+  );
+}
+
+/** Aires de repos proches, affichées dans le bandeau du niveau 3. */
+function RestAreas({
+  position,
+  rest,
+  onShare,
+}: {
+  position: { lat: number; lon: number } | null;
+  rest: RestState;
+  onShare: () => void;
+}) {
+  return (
+    <div className="mt-3 rounded-xl bg-black/25 p-3 text-left">
+      <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/85">Où s’arrêter ?</p>
+      {!position ? (
+        <button onClick={onShare} className="text-sm font-semibold underline">
+          Partager ma position pour trouver une aire de repos
+        </button>
+      ) : rest.status === "ok" && rest.areas.length > 0 ? (
+        <ul className="flex flex-col gap-1">
+          {rest.areas.map((a) => (
+            <li key={`${a.lat},${a.lon}`}>
+              <a
+                href={directionsUrl(a.lat, a.lon)}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-between gap-4 rounded-lg bg-white/10 px-3 py-1.5 text-sm hover:bg-white/20"
+              >
+                <span className="min-w-0 truncate">
+                  <b>{a.name}</b> <span className="text-white/70">· {REST_KIND_LABEL[a.kind]}</span>
+                </span>
+                <span className="shrink-0 font-mono font-bold">
+                  {a.distanceKm < 1 ? `${Math.round(a.distanceKm * 1000)} m` : `${a.distanceKm.toFixed(1)} km`} ↗
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : rest.status === "loading" || rest.status === "idle" ? (
+        <p className="text-sm text-white/80">
+          Recherche des aires de repos proches…{" "}
+          <a href={searchUrl(position.lat, position.lon)} target="_blank" rel="noreferrer" className="font-semibold underline">
+            ouvrir la carte ↗
+          </a>
+        </p>
+      ) : (
+        <a
+          href={searchUrl(position.lat, position.lon)}
+          target="_blank"
+          rel="noreferrer"
+          className="text-sm font-semibold underline"
+        >
+          {rest.status === "ok" ? "Aucune aire trouvée à proximité : ouvrir la carte ↗" : "Recherche indisponible : ouvrir la carte ↗"}
+        </a>
+      )}
     </div>
   );
 }
